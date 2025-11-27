@@ -1,30 +1,28 @@
+# app/schemas/merchant.py
+
+from __future__ import annotations
+
 from typing import Optional
-from pydantic import BaseModel, EmailStr, Field
-from uuid import UUID
+from pydantic import BaseModel
 
 
-# ------------------------------------------------------------
-# Base shared fields
-# ------------------------------------------------------------
 class MerchantBase(BaseModel):
-    name: str = Field(..., description="Merchant's business name")
-    email: EmailStr = Field(..., description="Merchant contact email")
-    phone: Optional[str] = Field(None, description="Contact phone number")
-    status: Optional[str] = Field(default="active", description="Account status")
+    name: Optional[str] = None
+    email: Optional[str] = None
+    external_ref: Optional[str] = None
 
 
-# ------------------------------------------------------------
-# For creating (POST /merchants)
-# ------------------------------------------------------------
 class MerchantCreate(MerchantBase):
-    password: str = Field(..., min_length=6, description="Password for merchant login")
+    name: str
 
 
-# ------------------------------------------------------------
-# For reading a merchant record
-# ------------------------------------------------------------
-class MerchantRead(MerchantBase):
-    id: UUID = Field(..., description="Merchant unique ID")
+class MerchantUpdate(MerchantBase):
+    is_active: Optional[bool] = None
+
+
+class MerchantResponse(MerchantBase):
+    id: int
+    is_active: bool
 
     class Config:
-        from_attributes = True  # replaces orm_mode
+        from_attributes = True
