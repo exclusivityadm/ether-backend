@@ -1,3 +1,5 @@
+# app/services/keepalive.py
+
 import httpx
 import logging
 import os
@@ -15,17 +17,6 @@ def load_urls(env_name: str):
     return [url.strip() for url in raw.split(",") if url.strip()]
 
 
-SUPABASE_URLS = load_urls("SUPABASE_KEEPALIVE_URLS")
-RENDER_URLS = load_urls("RENDER_KEEPALIVE_URLS")
-VERCEL_URLS = load_urls("VERCEL_KEEPALIVE_URLS")
-
-ALL_GROUPS = {
-    "supabase": SUPABASE_URLS,
-    "render": RENDER_URLS,
-    "vercel": VERCEL_URLS,
-}
-
-
 async def ping_url(url: str):
     try:
         async with httpx.AsyncClient(timeout=10) as client:
@@ -36,8 +27,19 @@ async def ping_url(url: str):
 
 
 def start_keepalive_scheduler():
+    """
+    Load environment variables *here*, at runtime,
+    so Render/.env variables actually exist.
+    """
     scheduler = AsyncIOScheduler()
     jobs_added = 0
+
+    # dynamically load URLs at call-time
+    ALL_GROUPS = {
+        "supabase": load_urls("SUPABASE_KEEPALIVE_URLS"),
+        "render": load_urls("RENDER_KEEPALIVE_URLS"),
+        "vercel": load_urls("VERCEL_KEEPALIVE_URLS"),
+    }
 
     for group, urls in ALL_GROUPS.items():
         for url in urls:
@@ -51,7 +53,7 @@ def start_keepalive_scheduler():
                 replace_existing=True,
             )
 
-            log.info(f"[KEEPALIVE] Added job: {url}")
+            log.info(f"[KEEPALIVE] Added job for {group}: {url}")
             jobs_added += 1
 
     if jobs_added == 0:
