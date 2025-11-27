@@ -1,43 +1,29 @@
-# app/scheduler.py
-
 from typing import Optional
-
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.triggers.interval import IntervalTrigger
-
-from app.services.keepalive import ping_all_keepalives
+from app.services.keepalive import start_keepalive_scheduler
 
 scheduler: Optional[AsyncIOScheduler] = None
 
-
-def start_scheduler() -> None:
+def start_scheduler():
     """
-    Start a single global AsyncIO scheduler instance
-    and register the keepalive job.
+    Starts the global scheduler. This now delegates all job creation
+    to start_keepalive_scheduler() inside keepalive.py.
     """
     global scheduler
 
     if scheduler is not None and scheduler.running:
         return
 
-    scheduler = AsyncIOScheduler()
+    # create scheduler by calling keepalive.py’s scheduler
+    scheduler = start_keepalive_scheduler()
 
-    # Run every 5 minutes by default
-    scheduler.add_job(
-        ping_all_keepalives,
-        IntervalTrigger(minutes=5),
-        id="keepalive-job",
-        replace_existing=True,
-    )
+    if scheduler is None:
+        print("Keepalive: no jobs configured; scheduler will not start.")
+        return
 
-    scheduler.start()
+    print("Keepalive: scheduler started with jobs.")
 
-
-def shutdown_scheduler() -> None:
-    """
-    Gracefully shut down the scheduler.
-    """
+def shutdown_scheduler():
     global scheduler
-
-    if scheduler is not None and scheduler.running:
+    if scheduler and scheduler.running:
         scheduler.shutdown()
