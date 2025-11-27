@@ -1,0 +1,1 @@
+class TestNiraSova: pass

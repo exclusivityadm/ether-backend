@@ -1,0 +1,1 @@
+class EtherError(Exception): pass

@@ -1,0 +1,1 @@
+class TestCustomer: pass

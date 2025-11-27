@@ -1,0 +1,1 @@
+class TestExclusivity: pass
