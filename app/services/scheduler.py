@@ -1,3 +1,5 @@
+# app/services/scheduler.py
+
 from typing import Optional
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from app.services.keepalive import start_keepalive_scheduler
@@ -5,16 +7,11 @@ from app.services.keepalive import start_keepalive_scheduler
 scheduler: Optional[AsyncIOScheduler] = None
 
 def start_scheduler():
-    """
-    Starts the global scheduler. This now delegates all job creation
-    to start_keepalive_scheduler() inside keepalive.py.
-    """
     global scheduler
 
     if scheduler is not None and scheduler.running:
         return
 
-    # create scheduler by calling keepalive.py’s scheduler
     scheduler = start_keepalive_scheduler()
 
     if scheduler is None:
