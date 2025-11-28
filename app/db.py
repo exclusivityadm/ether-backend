@@ -1,44 +1,24 @@
-from sqlalchemy.ext.asyncio import (
-    AsyncSession,
-    async_sessionmaker,
-    create_async_engine,
-)
+# app/db.py
+
+from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from app.settings import settings
-from app.models import Base
+from app.models.base import Base     # <-- FIXED: import directly from base.py
+from app.config import settings
 
-
-# ---------------------------------------------------------
-# DATABASE ENGINE (ASYNC POSTGRES)
-# ---------------------------------------------------------
 DATABASE_URL = settings.DATABASE_URL
 
-# Supabase requires asyncpg with SQLAlchemy 2.x
-engine = create_async_engine(
+engine = create_engine(
     DATABASE_URL,
-    future=True,
-    echo=False,
+    pool_pre_ping=True,
 )
 
-AsyncSessionLocal = async_sessionmaker(
-    bind=engine,
-    autoflush=False,
-    expire_on_commit=False,
-)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-
-# ---------------------------------------------------------
-# Dependency: yield async session
-# ---------------------------------------------------------
-async def get_db():
-    async with AsyncSessionLocal() as session:
-        yield session
-
-
-# ---------------------------------------------------------
-# Create database schema on startup
-# Safe — only creates missing tables
-# ---------------------------------------------------------
-async def init_db():
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+def init_db():
+    """
+    Initializes the database by creating all tables.
+    All models are already imported in app/models/__init__.py,
+    which registers them with SQLAlchemy metadata.
+    """
+    import app.models  # Required so SQLAlchemy sees all model classes
+    Base.metadata.create_all(bind=engine)
