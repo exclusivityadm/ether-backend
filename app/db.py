@@ -1,74 +1,44 @@
-# app/db.py
-
-from __future__ import annotations
-
-from contextlib import contextmanager
-from typing import Generator
-
-from sqlalchemy import create_engine
-from sqlalchemy.orm import declarative_base, sessionmaker, Session
-
+from sqlalchemy.ext.asyncio import (
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
+from sqlalchemy.orm import sessionmaker
 from app.settings import settings
+from app.models import Base
 
-# ----------------------------------------------------------
-# Engine & Session
-# ----------------------------------------------------------
 
-DATABASE_URL: str = settings.DATABASE_URL
+# ---------------------------------------------------------
+# DATABASE ENGINE (ASYNC POSTGRES)
+# ---------------------------------------------------------
+DATABASE_URL = settings.DATABASE_URL
 
-engine = create_engine(
+# Supabase requires asyncpg with SQLAlchemy 2.x
+engine = create_async_engine(
     DATABASE_URL,
-    pool_pre_ping=True,
     future=True,
+    echo=False,
 )
 
-SessionLocal = sessionmaker(
-    autocommit=False,
+AsyncSessionLocal = async_sessionmaker(
+    bind=engine,
     autoflush=False,
     expire_on_commit=False,
-    bind=engine,
-    future=True,
 )
 
-Base = declarative_base()
+
+# ---------------------------------------------------------
+# Dependency: yield async session
+# ---------------------------------------------------------
+async def get_db():
+    async with AsyncSessionLocal() as session:
+        yield session
 
 
-def get_db() -> Generator[Session, None, None]:
-    """
-    FastAPI dependency: yields a SQLAlchemy session and
-    always closes it after the request.
-    """
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
-
-@contextmanager
-def db_session() -> Generator[Session, None, None]:
-    """
-    Non-FastAPI helper context manager, useful for internal
-    jobs (cron, keepalive tasks that need DB, etc.).
-    """
-    db = SessionLocal()
-    try:
-        yield db
-        db.commit()
-    except Exception:
-        db.rollback()
-        raise
-    finally:
-        db.close()
-
-
-def init_db() -> None:
-    """
-    Optional helper to create tables based on models.
-    Not called automatically; you can import and run
-    this manually when you're ready to create schema.
-    """
-    # Import models so Base.metadata has all tables
-    from app import models  # noqa: F401
-
-    Base.metadata.create_all(bind=engine)
+# ---------------------------------------------------------
+# Create database schema on startup
+# Safe — only creates missing tables
+# ---------------------------------------------------------
+async def init_db():
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
