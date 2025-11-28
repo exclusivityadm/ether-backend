@@ -1,75 +1,53 @@
-# app/db.py
-
+import os
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.engine.url import make_url
-from app.models.base import Base
-from app.config import settings
-import logging
+from sqlalchemy.orm import sessionmaker, declarative_base
+from urllib.parse import quote_plus
 
-log = logging.getLogger("uvicorn")
+Base = declarative_base()
 
-# -----------------------------------------------------
-# Normalize DATABASE_URL
-# -----------------------------------------------------
-raw_url = settings.DATABASE_URL
+def build_connection_string():
+    raw = os.getenv("DATABASE_URL")
+    if not raw:
+        raise RuntimeError("DATABASE_URL missing")
 
-# Parse with SQLAlchemy (safe, structured)
-url = make_url(raw_url)
+    # Remove any options already in the URL — we will override manually
+    if "options=" in raw:
+        raw = raw.split("options=")[0].rstrip("&?")
 
-# Force dialect to psycopg
-url = url.set(
-    drivername="postgresql+psycopg",
-)
+    return raw
 
-# Always enforce SSL and IPv4
-url = url.update_query_dict({
-    "sslmode": "require",
-})
+DATABASE_URL = build_connection_string()
 
+# ----------------------------------------------------------
+# HARD-FORCE IPv4 by injecting psycopg connection parameters
+# ----------------------------------------------------------
+connect_args = {
+    # critical flag that psycopg obeys even if Render rewrites the URL
+    "options": "-c enable_ipv6=off"
+}
 
-DATABASE_URL = str(url)
-log.info(f"Using normalized DATABASE_URL: {DATABASE_URL}")
-
-# -----------------------------------------------------
-# Engine
-# -----------------------------------------------------
 engine = create_engine(
     DATABASE_URL,
+    echo=False,
+    future=True,
     pool_pre_ping=True,
-    pool_recycle=1800,
-    connect_args={
-        "sslmode": "require",
-        # Force IPv4-only resolution (Render → Supabase fix)
-        "target_session_attrs": "read-write",
-        "options": "-c inet_server_addr=0.0.0.0"
-    },
+    connect_args=connect_args
 )
 
 SessionLocal = sessionmaker(
-    bind=engine,
     autocommit=False,
     autoflush=False,
+    bind=engine,
+    future=True
 )
 
-# -----------------------------------------------------
-# Dependency
-# -----------------------------------------------------
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
-# -----------------------------------------------------
-# Initialize
-# -----------------------------------------------------
 async def init_db():
     """
-    Creates tables on startup.
+    Create tables at startup.
     """
-    import app.models
-    log.info("Initializing database schema…")
-    Base.metadata.create_all(bind=engine)
-    log.info("Database ready.")
+    try:
+        Base.metadata.create_all(bind=engine)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise
