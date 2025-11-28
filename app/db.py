@@ -51,3 +51,19 @@ async def init_db():
         import traceback
         traceback.print_exc()
         raise
+
+
+# ----------------------------------------------------------
+# REQUIRED BY FASTAPI ROUTERS
+# Database session dependency
+# ----------------------------------------------------------
+def get_db():
+    """
+    FastAPI dependency for getting a database session.
+    Ensures proper session lifecycle management.
+    """
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
