@@ -1,10 +1,13 @@
+# app/config.py
+
 from pydantic_settings import BaseSettings
 from typing import Optional
 
 class Settings(BaseSettings):
     ENV: str = "development"
 
-    DATABASE_URL: str = "postgresql+psycopg://user:password@localhost:5432/ether"
+    # Raw DATABASE_URL straight from environment
+    DATABASE_URL: str
 
     OPENAI_API_KEY: Optional[str] = None
     CORS_ALLOW_ORIGINS: str = ""
@@ -12,5 +15,6 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         extra = "allow"
+
 
 settings = Settings()
