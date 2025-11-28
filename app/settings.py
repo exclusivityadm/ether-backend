@@ -1,49 +1,17 @@
-# app/settings.py
-
-from functools import lru_cache
+import os
 from pydantic_settings import BaseSettings
-from typing import Optional
 
 
 class Settings(BaseSettings):
-    # ----------------------------------------------------------
-    # Core service
-    # ----------------------------------------------------------
-    ENVIRONMENT: str = "production"
-    DEBUG: bool = False
+    DATABASE_URL: str = os.getenv("DATABASE_URL", "")
+    OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
 
-    # ----------------------------------------------------------
-    # Supabase
-    # ----------------------------------------------------------
-    SUPABASE_URL: str
-    SUPABASE_ANON_KEY: str
-    SUPABASE_SERVICE_ROLE_KEY: Optional[str] = None
-
-    # ----------------------------------------------------------
-    # Database URL (Postgres / Supabase)
-    # ----------------------------------------------------------
-    DATABASE_URL: str
-
-    # ----------------------------------------------------------
-    # OpenAI
-    # ----------------------------------------------------------
-    OPENAI_API_KEY: str
-
-    # ----------------------------------------------------------
-    # Keepalive URLs (comma-separated lists)
-    # ----------------------------------------------------------
-    SUPABASE_KEEPALIVE_URLS: Optional[str] = None
-    RENDER_KEEPALIVE_URLS: Optional[str] = None
-    VERCEL_KEEPALIVE_URLS: Optional[str] = None
+    # Keepalive environment variables
+    SUPABASE_KEEPALIVE_URLS: str = os.getenv("SUPABASE_KEEPALIVE_URLS", "")
+    RENDER_KEEPALIVE_URLS: str = os.getenv("RENDER_KEEPALIVE_URLS", "")
 
     class Config:
-        env_file = ".env"
-        extra = "ignore"
+        extra = "allow"
 
 
-@lru_cache()
-def get_settings() -> Settings:
-    return Settings()
-
-
-settings = get_settings()
+settings = Settings()
