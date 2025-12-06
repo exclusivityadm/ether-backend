@@ -1,1 +1,0 @@
-# Drop F scaffolding

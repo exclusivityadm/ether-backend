@@ -1,1 +1,0 @@
-class TestSorta: pass
