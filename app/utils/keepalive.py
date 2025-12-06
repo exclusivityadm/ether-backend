@@ -1,45 +1,68 @@
+# app/utils/keepalive.py
+
 import asyncio
 import logging
 import os
-from typing import Awaitable, Callable
-
 import httpx
+from supabase import create_client
 
-logger = logging.getLogger("ether_v2.keepalive")
-
-
-async def _periodic_task(name: str, interval_seconds: int, func: Callable[[], Awaitable[None]]):
-    logger.info("Starting periodic task '%s' (interval=%ss)", name, interval_seconds)
-    while True:
-        try:
-            await func()
-        except Exception as exc:
-            logger.warning("Keepalive task '%s' encountered an error: %s", name, exc)
-        await asyncio.sleep(interval_seconds)
+log = logging.getLogger("ether_v2.keepalive")
 
 
-async def _ping_url(url: str) -> None:
+# ---------------------------------------------------------
+# Internal Keepalive: self ping every 60s
+# Supabase Keepalive: auth health ping every 300s
+# ---------------------------------------------------------
+
+async def ping_self():
+    url = os.getenv("SELF_URL", "http://127.0.0.1:10000/health")
     try:
-        async with httpx.AsyncClient(timeout=5) as client:
-            resp = await client.get(url)
-        logger.debug("Keepalive ping to %s → %s", url, resp.status_code)
-    except Exception as exc:
-        logger.debug("Keepalive ping to %s failed: %s", url, exc)
+        async with httpx.AsyncClient(timeout=8) as client:
+            await client.get(url)
+        log.info(f"[KeepAlive] Self OK → {url}")
+    except Exception as e:
+        log.error(f"[KeepAlive] Self FAILED → {url} :: {e}")
 
 
-def start_keepalive() -> None:
+async def ping_supabase():
+    url = os.getenv("SUPABASE_URL")
+    key = os.getenv("SUPABASE_ANON_KEY")
+
+    if not url or not key:
+        log.warning("[KeepAlive] Supabase environment variables missing — skipping")
+        return
+
+    client = create_client(url, key)
+
+    try:
+        client.functions.invoke("config")   # minimal valid endpoint call
+        log.info("[KeepAlive] Supabase OK")
+    except Exception as e:
+        log.error(f"[KeepAlive] Supabase FAILED :: {e}")
+
+
+# ---------------------------------------------------------
+# Task Scheduler
+# ---------------------------------------------------------
+
+def start_keepalive_tasks():
+    """
+    This runs ONLY on deployment, and schedules ongoing background pings.
+    No manual triggers required.
+    """
+    async def scheduler():
+        while True:
+            await ping_self()               # every 1 min
+            await asyncio.sleep(60)
+
+    async def supabase_scheduler():
+        while True:
+            await ping_supabase()           # every 5 min
+            await asyncio.sleep(300)
+
     loop = asyncio.get_event_loop()
+    loop.create_task(scheduler())
+    loop.create_task(supabase_scheduler())
 
-    port = os.getenv("PORT", "10000")
-    base_url = os.getenv("SELF_BASE_URL", f"http://127.0.0.1:{port}")
-    health_url = base_url.rstrip("/") + "/health"
-    loop.create_task(_periodic_task("self-health", 60, lambda: _ping_url(health_url)))
-
-    supabase_url = os.getenv("SUPABASE_URL", "").strip()
-    if supabase_url:
-        supabase_health = supabase_url.rstrip("/") + "/auth/v1/health"
-        loop.create_task(
-            _periodic_task("supabase-health", 300, lambda: _ping_url(supabase_health))
-        )
-
-    logger.info("Keepalive tasks scheduled (self: %s, supabase: %s)", health_url, bool(supabase_url))
+    log.info("Keepalive tasks scheduled ✓")
+    return True
