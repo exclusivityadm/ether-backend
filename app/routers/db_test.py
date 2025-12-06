@@ -3,22 +3,22 @@
 from fastapi import APIRouter
 from app.utils.supabase_client import get_supabase_client
 
-router = APIRouter(prefix="/db", tags=["supabase-test"])
+router = APIRouter(prefix="/db", tags=["supabase-db-test"])
 
 
 @router.get("/tables")
-async def list_tables():
+async def list_test_table():
     """
-    Tests Supabase SELECT ability by reading from a known table.
-    You may substitute 'profiles' with any existing table.
+    Reads from ether_test table to verify Supabase READ access.
     """
     client = get_supabase_client()
     try:
-        result = client.table("profiles").select("*", count="exact").limit(1).execute()
+        result = client.table("ether_test").select("*", count="exact").limit(10).execute()
         return {
             "connected": True,
-            "tables_accessible": True,
-            "sample_record": result.data
+            "table": "ether_test",
+            "records": result.data,
+            "count": result.count
         }
     except Exception as e:
         return {
@@ -30,7 +30,7 @@ async def list_tables():
 @router.post("/write")
 async def write_test():
     """
-    Tests Supabase WRITE ability by inserting into ether_test table.
+    Writes into ether_test table to verify Supabase WRITE access.
     """
     client = get_supabase_client()
     try:
