@@ -1,28 +1,25 @@
-import logging
-import os
+# app/main.py
 
+import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-
 from app.routers.health import router as health_router
 from app.routers.db_status import router as db_router
-from app.utils.keepalive import start_keepalive
+from app.routers.db_test import router as db_test_router
+from app.utils.keepalive import start_keepalive_tasks
 
-LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
-
-logging.basicConfig(
-    level=getattr(logging, LOG_LEVEL, logging.INFO),
-    format="%(asctime)s [%(levelname)s] %(name)s - %(message)s",
-)
-logger = logging.getLogger("ether_v2.main")
-logger.info("Starting Ether v2 backend initialization")
+log = logging.getLogger("ether_v2.main")
 
 app = FastAPI(
     title="Ether Backend v2",
     version="2.0.0",
-    description="Minimal but stable Ether v2 backend with Supabase + keepalive.",
+    description="Stable Ether API with Supabase connectivity + keepalives"
 )
 
+
+# ----------------------------------------
+# CORS (allow dev + production)
+# ----------------------------------------
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -31,14 +28,27 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(health_router)
-app.include_router(db_router)
 
+# ----------------------------------------
+# ROUTES
+# ----------------------------------------
+app.include_router(health_router)
+app.include_router(db_router)        # Supabase health check
+app.include_router(db_test_router)   # NEW: Real DB read/write testing
+
+
+# ----------------------------------------
+# STARTUP EVENTS
+# ----------------------------------------
 @app.on_event("startup")
-async def startup_event() -> None:
-    logger.info("Ether v2 backend startup: bootstrapping keepalive tasks")
-    try:
-        start_keepalive()
-        logger.info("Keepalive scheduler started")
-    except Exception as exc:
-        logger.exception("Failed to start keepalive scheduler: %s", exc)
+async def startup_event():
+    log.info("Ether v2 backend startup: bootstrapping keepalive tasks")
+    start_keepalive_tasks()
+    log.info("Keepalive scheduler started")
+
+
+@app.get("/")
+async def root():
+    return {"status": "Ether v2 online", "routes": ["/health", "/db/status", "/db/tables", "/db/write"]}
+
+
