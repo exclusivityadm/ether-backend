@@ -1,59 +1,75 @@
 # app/main.py
-
 import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.middleware.errors import install_error_handlers
+from app.middleware.internal_gate import InternalOnlyGate
+
 from app.routers.health import router as health_router
+from app.routers.version import router as version_router
+from app.routers.ether_ingest import router as ether_ingest_router
+
 from app.routers.db_status import router as db_status_router
 from app.routers.db_test import router as db_test_router
 
-from app.routes.ether_ingest import router as ether_ingest_router
 from app.utils.keepalive import start_keepalive_tasks
+from app.utils.settings import settings
 
 log = logging.getLogger("ether_v2.main")
 
 app = FastAPI(
     title="Ether Backend v2",
-    version="2.1.0",
-    description="Internal-only Ether orchestration layer"
+    version=settings.ETHER_VERSION,
+    description="Sealed internal-only Ether API (contracts + ingest + observability)",
 )
 
-# ----------------------------------
-# CORS (SAFE: Ether is internal-only)
-# ----------------------------------
+# ---- Errors first: stable envelopes, no trace leaks ----
+install_error_handlers(app)
 
+# ---- CORS: locked down (or disabled) ----
+# If you don't need CORS at all (recommended for internal-only), set:
+# ETHER_CORS_MODE=none
+if settings.ETHER_CORS_MODE == "allowlist":
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.ETHER_CORS_ALLOW_ORIGINS,
+        allow_credentials=False,
+        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_headers=["*"],
+    )
+
+# ---- Internal-only gate: applies to EVERYTHING except allowlisted paths ----
 app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # Ether is not browser-facing
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    InternalOnlyGate,
+    internal_token=settings.ETHER_INTERNAL_TOKEN,
+    allowed_sources=settings.ETHER_ALLOWED_SOURCES,
+    exempt_prefixes=("/health", "/version", "/"),
 )
 
-# ----------------------------------
-# PUBLIC / INTERNAL ROUTES
-# ----------------------------------
-
+# ---- Routers ----
 app.include_router(health_router)
+app.include_router(version_router)
+app.include_router(ether_ingest_router)
+
+# Keeping your db diagnostic routers, but they are now internal-gated
 app.include_router(db_status_router)
 app.include_router(db_test_router)
-
-# INTERNAL-ONLY ETHER ROUTES
-app.include_router(ether_ingest_router)
 
 
 @app.get("/")
 async def root():
     return {
-        "status": "Ether Backend v2 Online",
+        "status": "Ether Backend v2 Online (SEALED)",
         "mode": "internal-only",
         "routes": [
             "/health",
+            "/health/deep",
+            "/version",
+            "/ether/ingest",
             "/db/status",
             "/db/tables",
             "/db/write",
-            "/ether/ingest (internal only)",
         ],
     }
 
