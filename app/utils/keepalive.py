@@ -1,71 +1,41 @@
 # app/utils/keepalive.py
+from __future__ import annotations
 
 import asyncio
 import logging
-import os
-import httpx
+from typing import Optional
+
+from app.db.supabase import get_supabase_client
 
 log = logging.getLogger("ether_v2.keepalive")
 
-
-# ------------------------
-# GET SELF URL AUTOMATICALLY
-# ------------------------
-def get_self_url():
-    # Render provides HOST + PORT automatically
-    host = os.getenv("RENDER_EXTERNAL_HOSTNAME")
-    if host:
-        return f"https://{host}/health"     # cloud URL
-    return "http://127.0.0.1:10000/health"  # local fallback
+_KEEPALIVE_TASK: Optional[asyncio.Task] = None
+_INTERVAL_SECONDS = 300  # 5 minutes (safe, cheap, effective)
 
 
-# ------------------------
-# PING API TO KEEP SERVICE AWAKE
-# ------------------------
-async def ping_self():
-    url = get_self_url()
-    try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            await client.get(url)
-        log.info(f"[KeepAlive] SELF OK → {url}")
-    except Exception as e:
-        log.warning(f"[KeepAlive] SELF FAIL → {url} :: {e}")
+async def _keepalive_loop() -> None:
+    """
+    Internal Ether keepalive.
+    Touches Supabase periodically to prevent service-level idling
+    and to keep the event loop warm.
+    """
+    while True:
+        try:
+            supabase = get_supabase_client()
+            supabase.table("ether_test").select("id").limit(1).execute()
+            log.debug("Ether keepalive tick")
+        except Exception as exc:
+            # Never crash Ether for keepalive issues
+            log.warning("Ether keepalive failed: %s", exc)
+
+        await asyncio.sleep(_INTERVAL_SECONDS)
 
 
-# ------------------------
-# VERIFY SUPABASE IS REACHABLE
-# ------------------------
-async def ping_supabase():
-    url = os.getenv("SUPABASE_URL")
-    if not url:
-        log.warning("[KeepAlive] Missing SUPABASE_URL")
+def start_keepalive_tasks() -> None:
+    global _KEEPALIVE_TASK
+
+    if _KEEPALIVE_TASK is not None:
         return
-    health = f"{url}/auth/v1/health"
-    try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            await client.get(health)
-        log.info("[KeepAlive] SUPABASE OK")
-    except Exception as e:
-        log.warning(f"[KeepAlive] SUPABASE FAIL :: {e}")
-
-
-# ------------------------
-# BACKGROUND TASK BOOTSTRAP
-# ------------------------
-def start_keepalive_tasks():
-    async def self_loop():
-        while True:
-            await ping_self()
-            await asyncio.sleep(60)    # 1 min
-
-    async def supabase_loop():
-        while True:
-            await ping_supabase()
-            await asyncio.sleep(300)   # 5 min
 
     loop = asyncio.get_event_loop()
-    loop.create_task(self_loop())
-    loop.create_task(supabase_loop())
-
-    log.info("Keepalive services active ✓")
-    return True
+    _KEEPALIVE_TASK = loop.create_task(_keepalive_loop())
