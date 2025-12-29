@@ -34,6 +34,5 @@ async def _keepalive_loop():
             await asyncio.sleep(KEEPALIVE_INTERVAL_SECONDS)
 
 
-def start_keepalive_tasks():
-    loop = asyncio.get_event_loop()
-    loop.create_task(_keepalive_loop())
+async def start_keepalive_tasks():
+    asyncio.create_task(_keepalive_loop())
