@@ -1,6 +1,7 @@
 # app/main.py
 import asyncio
 import logging
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -18,10 +19,25 @@ from app.utils.settings import settings
 
 logging.basicConfig(level=logging.INFO)
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    print("[LIFESPAN] startup — scheduling keepalive")
+    task = asyncio.create_task(keepalive_loop())
+    try:
+        yield
+    finally:
+        print("[LIFESPAN] shutdown — cancelling keepalive")
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+
 app = FastAPI(
     title="Ether Backend v2",
     version=settings.ETHER_VERSION,
     description="Sealed internal-only Ether API (contracts + ingest + observability)",
+    lifespan=lifespan,
 )
 
 # ---- Errors first ----
@@ -59,10 +75,3 @@ async def root():
         "status": "Ether Backend v2 Online (SEALED)",
         "mode": "internal-only",
     }
-
-
-@app.on_event("startup")
-async def startup_event():
-    print("[STARTUP] Ether v2 starting")
-    app.state.keepalive_task = asyncio.create_task(keepalive_loop())
-    print("[STARTUP] Keepalive task scheduled")
