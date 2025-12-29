@@ -1,9 +1,8 @@
+# app/utils/keepalive.py
 import asyncio
-import logging
 import httpx
 import os
-
-logger = logging.getLogger("keepalive")
+import time
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
@@ -11,9 +10,11 @@ SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 KEEPALIVE_INTERVAL_SECONDS = 300  # 5 minutes
 
 
-async def _keepalive_loop():
+async def keepalive_loop():
+    print("[KEEPALIVE] loop starting")
+
     if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
-        logger.warning("Keepalive disabled: Supabase env vars missing")
+        print("[KEEPALIVE] disabled — missing Supabase env vars")
         return
 
     url = f"{SUPABASE_URL}/rest/v1/rpc/keepalive_ping"
@@ -27,12 +28,8 @@ async def _keepalive_loop():
         while True:
             try:
                 await client.post(url, headers=headers)
-                logger.info("Supabase keepalive ping sent")
+                print(f"[KEEPALIVE] ping sent @ {time.strftime('%X')}")
             except Exception as e:
-                logger.error(f"Supabase keepalive failed: {e}")
+                print(f"[KEEPALIVE] ping failed: {e}")
 
             await asyncio.sleep(KEEPALIVE_INTERVAL_SECONDS)
-
-
-async def start_keepalive_tasks():
-    asyncio.create_task(_keepalive_loop())
