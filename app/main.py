@@ -1,9 +1,9 @@
 # app/main.py
-import asyncio
 import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+import anyio
 
 from app.middleware.errors import install_error_handlers
 from app.middleware.internal_gate import InternalOnlyGate
@@ -22,17 +22,11 @@ logging.basicConfig(level=logging.INFO)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    print("[LIFESPAN] startup — launching keepalive supervisor")
-    task = asyncio.create_task(keepalive_loop())
-    try:
+    print("[LIFESPAN] startup — starting anyio task group")
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(keepalive_loop)
         yield
-    finally:
-        print("[LIFESPAN] shutdown — cancelling keepalive")
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            print("[LIFESPAN] keepalive cancelled cleanly")
+        print("[LIFESPAN] shutdown — anyio task group exiting")
 
 
 app = FastAPI(
