@@ -24,7 +24,7 @@ async def keepalive_loop():
         "Content-Type": "application/json",
     }
 
-    async with httpx.AsyncClient(timeout=5) as client:
+    async with httpx.AsyncClient(timeout=10) as client:
         while True:
             try:
                 await client.post(url, headers=headers)
