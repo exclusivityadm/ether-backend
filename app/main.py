@@ -22,15 +22,17 @@ logging.basicConfig(level=logging.INFO)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    print("[LIFESPAN] startup — scheduling keepalive")
+    print("[LIFESPAN] startup — launching keepalive supervisor")
     task = asyncio.create_task(keepalive_loop())
     try:
         yield
     finally:
         print("[LIFESPAN] shutdown — cancelling keepalive")
         task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
+        try:
             await task
+        except asyncio.CancelledError:
+            print("[LIFESPAN] keepalive cancelled cleanly")
 
 
 app = FastAPI(
@@ -40,10 +42,8 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# ---- Errors first ----
 install_error_handlers(app)
 
-# ---- CORS ----
 if settings.ETHER_CORS_MODE == "allowlist":
     app.add_middleware(
         CORSMiddleware,
@@ -53,7 +53,6 @@ if settings.ETHER_CORS_MODE == "allowlist":
         allow_headers=["*"],
     )
 
-# ---- Internal gate ----
 app.add_middleware(
     InternalOnlyGate,
     internal_token=settings.ETHER_INTERNAL_TOKEN,
@@ -61,7 +60,6 @@ app.add_middleware(
     exempt_prefixes=("/health", "/version", "/"),
 )
 
-# ---- Routers ----
 app.include_router(health_router)
 app.include_router(version_router)
 app.include_router(ether_ingest_router)
