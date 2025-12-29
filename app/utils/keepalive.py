@@ -1,41 +1,47 @@
-# app/utils/keepalive.py
-from __future__ import annotations
-
-import asyncio
+import os
+import httpx
 import logging
-from typing import Optional
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-from app.db.supabase import get_supabase_client
+log = logging.getLogger("keepalive")
 
-log = logging.getLogger("ether_v2.keepalive")
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 
-_KEEPALIVE_TASK: Optional[asyncio.Task] = None
-_INTERVAL_SECONDS = 300  # 5 minutes (safe, cheap, effective)
-
-
-async def _keepalive_loop() -> None:
+async def supabase_rest_keepalive():
     """
-    Internal Ether keepalive.
-    Touches Supabase periodically to prevent service-level idling
-    and to keep the event loop warm.
+    Performs a REAL Supabase REST query that counts as activity.
+    This prevents project pausing.
     """
-    while True:
-        try:
-            supabase = get_supabase_client()
-            supabase.table("ether_test").select("id").limit(1).execute()
-            log.debug("Ether keepalive tick")
-        except Exception as exc:
-            # Never crash Ether for keepalive issues
-            log.warning("Ether keepalive failed: %s", exc)
 
-        await asyncio.sleep(_INTERVAL_SECONDS)
-
-
-def start_keepalive_tasks() -> None:
-    global _KEEPALIVE_TASK
-
-    if _KEEPALIVE_TASK is not None:
+    if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
+        log.warning("[KEEPALIVE] Supabase env vars missing")
         return
 
-    loop = asyncio.get_event_loop()
-    _KEEPALIVE_TASK = loop.create_task(_keepalive_loop())
+    url = f"{SUPABASE_URL}/rest/v1/rpc/now"
+
+    headers = {
+        "apikey": SUPABASE_SERVICE_ROLE_KEY,
+        "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
+        "Content-Type": "application/json",
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            res = await client.post(url, headers=headers, json={})
+            if res.status_code < 400:
+                log.info("[KEEPALIVE] Supabase REST activity OK")
+            else:
+                log.error(f"[KEEPALIVE] Supabase REST failed {res.status_code}")
+    except Exception as e:
+        log.error(f"[KEEPALIVE] Supabase error: {e}")
+
+
+def start_keepalive(scheduler: AsyncIOScheduler, interval_seconds: int = 300):
+    scheduler.add_job(
+        supabase_rest_keepalive,
+        "interval",
+        seconds=interval_seconds,
+        id="supabase_rest_keepalive",
+        replace_existing=True,
+    )
