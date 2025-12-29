@@ -11,7 +11,7 @@ KEEPALIVE_INTERVAL_SECONDS = 300  # 5 minutes
 
 
 async def keepalive_loop():
-    print("[KEEPALIVE] loop starting")
+    print("[KEEPALIVE] supervisor loop starting")
 
     if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
         print("[KEEPALIVE] disabled — missing Supabase env vars")
@@ -27,9 +27,21 @@ async def keepalive_loop():
     async with httpx.AsyncClient(timeout=10) as client:
         while True:
             try:
+                print("[KEEPALIVE] sending ping")
                 await client.post(url, headers=headers)
                 print(f"[KEEPALIVE] ping sent @ {time.strftime('%X')}")
-            except Exception as e:
-                print(f"[KEEPALIVE] ping failed: {e}")
 
-            await asyncio.sleep(KEEPALIVE_INTERVAL_SECONDS)
+                # Sleep in smaller chunks so cancellation is observable
+                remaining = KEEPALIVE_INTERVAL_SECONDS
+                while remaining > 0:
+                    await asyncio.sleep(min(30, remaining))
+                    remaining -= 30
+
+            except asyncio.CancelledError:
+                # This SHOULD NOT kill the loop
+                print("[KEEPALIVE] cancellation intercepted — continuing")
+                continue
+
+            except Exception as e:
+                print(f"[KEEPALIVE] error: {e}")
+                await asyncio.sleep(30)
