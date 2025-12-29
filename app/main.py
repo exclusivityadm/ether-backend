@@ -77,4 +77,5 @@ async def root():
 @app.on_event("startup")
 async def startup_event():
     log.info("Ether v2 starting — keepalive tasks online")
-    start_keepalive_tasks()
+    await start_keepalive_tasks()
+
