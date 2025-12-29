@@ -1,8 +1,5 @@
 # app/main.py
 import logging
-from contextlib import asynccontextmanager
-
-import anyio
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -15,30 +12,20 @@ from app.routers.ether_ingest import router as ether_ingest_router
 from app.routers.db_status import router as db_status_router
 from app.routers.db_test import router as db_test_router
 
-from app.utils.keepalive import keepalive_supervisor
 from app.utils.settings import settings
 
-logging.basicConfig(level=logging.INFO)
-
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    print("[LIFESPAN] startup — starting anyio task group (keepalive supervised)")
-    async with anyio.create_task_group() as tg:
-        tg.start_soon(keepalive_supervisor)
-        yield
-    print("[LIFESPAN] shutdown — task group exited")
-
+log = logging.getLogger("ether_v2.main")
 
 app = FastAPI(
     title="Ether Backend v2",
     version=settings.ETHER_VERSION,
     description="Sealed internal-only Ether API (contracts + ingest + observability)",
-    lifespan=lifespan,
 )
 
+# ---- Errors first: stable envelopes, no trace leaks ----
 install_error_handlers(app)
 
+# ---- CORS: locked down (or disabled) ----
 if settings.ETHER_CORS_MODE == "allowlist":
     app.add_middleware(
         CORSMiddleware,
@@ -48,6 +35,7 @@ if settings.ETHER_CORS_MODE == "allowlist":
         allow_headers=["*"],
     )
 
+# ---- Internal-only gate ----
 app.add_middleware(
     InternalOnlyGate,
     internal_token=settings.ETHER_INTERNAL_TOKEN,
@@ -55,16 +43,29 @@ app.add_middleware(
     exempt_prefixes=("/health", "/version", "/"),
 )
 
+# ---- Routers ----
 app.include_router(health_router)
 app.include_router(version_router)
 app.include_router(ether_ingest_router)
 app.include_router(db_status_router)
 app.include_router(db_test_router)
 
-
 @app.get("/")
 async def root():
     return {
         "status": "Ether Backend v2 Online (SEALED)",
         "mode": "internal-only",
+        "routes": [
+            "/health",
+            "/health/deep",
+            "/version",
+            "/ether/ingest",
+            "/db/status",
+            "/db/tables",
+            "/db/write",
+        ],
     }
+
+@app.on_event("startup")
+async def startup_event():
+    log.info("Ether v2 starting — no keepalive tasks loaded")
