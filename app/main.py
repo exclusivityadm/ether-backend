@@ -1,9 +1,10 @@
 # app/main.py
 import logging
 from contextlib import asynccontextmanager
+
+import anyio
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-import anyio
 
 from app.middleware.errors import install_error_handlers
 from app.middleware.internal_gate import InternalOnlyGate
@@ -14,7 +15,7 @@ from app.routers.ether_ingest import router as ether_ingest_router
 from app.routers.db_status import router as db_status_router
 from app.routers.db_test import router as db_test_router
 
-from app.utils.keepalive import keepalive_loop
+from app.utils.keepalive import keepalive_supervisor
 from app.utils.settings import settings
 
 logging.basicConfig(level=logging.INFO)
@@ -22,11 +23,11 @@ logging.basicConfig(level=logging.INFO)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    print("[LIFESPAN] startup — starting anyio task group")
+    print("[LIFESPAN] startup — starting anyio task group (keepalive supervised)")
     async with anyio.create_task_group() as tg:
-        tg.start_soon(keepalive_loop)
+        tg.start_soon(keepalive_supervisor)
         yield
-        print("[LIFESPAN] shutdown — anyio task group exiting")
+    print("[LIFESPAN] shutdown — task group exited")
 
 
 app = FastAPI(
