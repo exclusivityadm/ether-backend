@@ -1,4 +1,5 @@
 # app/main.py
+import asyncio
 import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -23,8 +24,10 @@ app = FastAPI(
     description="Sealed internal-only Ether API (contracts + ingest + observability)",
 )
 
+# ---- Errors first ----
 install_error_handlers(app)
 
+# ---- CORS ----
 if settings.ETHER_CORS_MODE == "allowlist":
     app.add_middleware(
         CORSMiddleware,
@@ -34,6 +37,7 @@ if settings.ETHER_CORS_MODE == "allowlist":
         allow_headers=["*"],
     )
 
+# ---- Internal gate ----
 app.add_middleware(
     InternalOnlyGate,
     internal_token=settings.ETHER_INTERNAL_TOKEN,
@@ -41,6 +45,7 @@ app.add_middleware(
     exempt_prefixes=("/health", "/version", "/"),
 )
 
+# ---- Routers ----
 app.include_router(health_router)
 app.include_router(version_router)
 app.include_router(ether_ingest_router)
