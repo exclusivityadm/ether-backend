@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from functools import lru_cache
 from typing import Any, Dict, List, Optional
 
@@ -35,13 +36,37 @@ class ProjectRecord(BaseModel):
     service_role_configured: bool = False
 
 
+def _project_env(prefix_slug: str, suffix: str) -> Optional[str]:
+    key = f"{prefix_slug.strip().upper()}_{suffix.strip().upper()}"
+    value = os.getenv(key, "").strip()
+    return value or None
+
+
+def _enrich_project_secrets(payload: Dict[str, Any]) -> Dict[str, Any]:
+    slug = str(payload.get("slug", "")).strip().upper()
+    if not slug:
+        return dict(payload)
+
+    supabase_url = _project_env(slug, "SUPABASE_URL")
+    anon_key = _project_env(slug, "SUPABASE_ANON_KEY")
+    service_role_key = _project_env(slug, "SUPABASE_SERVICE_ROLE_KEY")
+
+    enriched = dict(payload)
+    if supabase_url:
+        enriched["supabase_url"] = supabase_url
+    enriched["supabase_anon_key_configured"] = bool(anon_key)
+    enriched["service_role_configured"] = bool(service_role_key)
+    return enriched
+
+
 def _default_projects() -> List[Dict[str, Any]]:
     return [
         {
             "slug": "circa_haus",
             "display_name": "Circa Haus",
             "status": "planned",
-            "environment": "development",
+            "environment": settings.ETHER_ENVIRONMENT,
+            "app_ids": ["circa_haus", "salute", "origin_loft"],
             "provider_set": {
                 "supabase": True,
                 "stripe": True,
@@ -53,6 +78,7 @@ def _default_projects() -> List[Dict[str, Any]]:
                 "ether_fronted": False,
                 "rebrand_required": True,
                 "provider_wiring_pending": True,
+                "sentinel_enabled": True,
             },
             "branding": {
                 "app_name": "Circa Haus",
@@ -70,7 +96,8 @@ def _default_projects() -> List[Dict[str, Any]]:
             "slug": "exclusivity",
             "display_name": "Exclusivity",
             "status": "active",
-            "environment": "development",
+            "environment": settings.ETHER_ENVIRONMENT,
+            "app_ids": ["exclusivity"],
             "provider_set": {
                 "supabase": True,
                 "stripe": False,
@@ -80,6 +107,7 @@ def _default_projects() -> List[Dict[str, Any]]:
             },
             "feature_flags": {
                 "legacy_ingest_enabled": True,
+                "sentinel_enabled": True,
             },
             "branding": {
                 "app_name": "Exclusivity",
@@ -92,7 +120,8 @@ def _default_projects() -> List[Dict[str, Any]]:
             "slug": "sova",
             "display_name": "Sova",
             "status": "planned",
-            "environment": "development",
+            "environment": settings.ETHER_ENVIRONMENT,
+            "app_ids": ["sova"],
             "provider_set": {
                 "supabase": True,
                 "stripe": False,
@@ -102,6 +131,7 @@ def _default_projects() -> List[Dict[str, Any]]:
             },
             "feature_flags": {
                 "legacy_ingest_enabled": True,
+                "sentinel_enabled": True,
             },
             "branding": {
                 "app_name": "Sova",
@@ -154,7 +184,7 @@ def _deep_merge_project_dict(base: Dict[str, Any], override: Dict[str, Any]) -> 
 @lru_cache(maxsize=1)
 def get_project_registry() -> Dict[str, ProjectRecord]:
     registry: Dict[str, ProjectRecord] = {
-        item["slug"]: ProjectRecord.model_validate(item) for item in _default_projects()
+        item["slug"]: ProjectRecord.model_validate(_enrich_project_secrets(item)) for item in _default_projects()
     }
 
     raw = (settings.ETHER_PROJECTS_JSON or "").strip()
@@ -168,6 +198,7 @@ def get_project_registry() -> Dict[str, ProjectRecord]:
         return registry
 
     for slug, payload in overrides.items():
+        payload = _enrich_project_secrets(payload)
         if slug in registry:
             merged = _deep_merge_project_dict(registry[slug].model_dump(), payload)
             registry[slug] = ProjectRecord.model_validate(merged)
@@ -233,6 +264,7 @@ def project_to_public_payload(project: ProjectRecord) -> Dict[str, Any]:
     )
     enabled_providers = sorted([name for name, enabled in project.provider_set.items() if enabled])
     payload["enabled_providers"] = enabled_providers
+    payload["supabase_ready"] = bool(project.supabase_url and project.supabase_anon_key_configured)
 
     if settings.ETHER_BOOTSTRAP_EXPOSE_PUBLIC_CONFIG and project.supabase_url:
         payload["public_config"] = {
