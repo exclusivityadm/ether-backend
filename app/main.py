@@ -11,6 +11,7 @@ from app.routers.version import router as version_router
 from app.routers.ether_ingest import router as ether_ingest_router
 from app.routers.db_status import router as db_status_router
 from app.routers.db_test import router as db_test_router
+from app.routers.projects import router as projects_router
 
 from app.utils.settings import settings
 
@@ -19,7 +20,7 @@ log = logging.getLogger("ether_v2.main")
 app = FastAPI(
     title="Ether Backend v2",
     version=settings.ETHER_VERSION,
-    description="Sealed internal-only Ether API (contracts + ingest + observability)",
+    description="Sealed internal-only Ether API (contracts + ingest + observability + control plane foundation)",
 )
 
 # ---- Errors first: stable envelopes, no trace leaks ----
@@ -49,6 +50,7 @@ app.include_router(version_router)
 app.include_router(ether_ingest_router)
 app.include_router(db_status_router)
 app.include_router(db_test_router)
+app.include_router(projects_router)
 
 @app.get("/")
 async def root():
@@ -60,6 +62,8 @@ async def root():
             "/health/deep",
             "/version",
             "/ether/ingest",
+            "/projects",
+            "/projects/bootstrap",
             "/db/status",
             "/db/tables",
             "/db/write",
@@ -68,4 +72,4 @@ async def root():
 
 @app.on_event("startup")
 async def startup_event():
-    log.info("Ether v2 starting — no keepalive tasks loaded")
+    log.info("Ether v2 starting — control-plane foundation loaded")
