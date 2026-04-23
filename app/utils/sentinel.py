@@ -118,6 +118,15 @@ class SentinelEngine:
         self._quarantines.append(record)
         return record
 
+    def list_threats(self, project_slug: Optional[str] = None, limit: Optional[int] = None) -> List[ThreatRecord]:
+        if not project_slug:
+            items = list(self._threats)
+        else:
+            items = [t for t in self._threats if t.project_slug == project_slug]
+        if limit is not None:
+            return items[-limit:]
+        return items
+
     def list_quarantines(self, project_slug: Optional[str] = None) -> List[QuarantineRecord]:
         if not project_slug:
             return list(self._quarantines)
