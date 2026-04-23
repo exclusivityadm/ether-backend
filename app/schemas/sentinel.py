@@ -1,7 +1,7 @@
 # app/schemas/sentinel.py
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -43,3 +43,17 @@ class QuarantineResponse(BaseModel):
     target_id: str
     status: str
     reason: str
+
+
+class ThreatReviewRequest(BaseModel):
+    project_slug: Optional[str] = None
+    recent_limit: int = 10
+
+
+class ThreatReviewResponse(BaseModel):
+    ok: bool = True
+    project_slug: Optional[str] = None
+    ai_mode: str
+    summary: str
+    recommended_actions: List[str] = Field(default_factory=list)
+    counts: Dict[str, int] = Field(default_factory=dict)
