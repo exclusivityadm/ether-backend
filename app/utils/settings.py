@@ -23,7 +23,6 @@ class Settings:
     ETHER_VERSION: str = os.getenv("ETHER_VERSION", "2.1.0-foundation")
 
     # Internal-only auth
-    # REQUIRED in production: set this in Render/Vercel-to-Render callers, etc.
     ETHER_INTERNAL_TOKEN: str = os.getenv("ETHER_INTERNAL_TOKEN", "")
 
     # Optional caller allowlist (enforced when header present). Keep tight.
@@ -36,14 +35,22 @@ class Settings:
     ETHER_CORS_ALLOW_ORIGINS: List[str] = tuple(_split_csv(os.getenv("ETHER_CORS_ALLOW_ORIGINS", "")))
 
     # Ingest safety
-    ETHER_MAX_BODY_BYTES: int = int(os.getenv("ETHER_MAX_BODY_BYTES", "1048576"))  # 1MB default
-    ETHER_INGEST_RPM: int = int(os.getenv("ETHER_INGEST_RPM", "120"))  # per source, best-effort in-memory
-    ETHER_REPLAY_TTL_SECONDS: int = int(os.getenv("ETHER_REPLAY_TTL_SECONDS", "600"))  # 10 min idempotency window
+    ETHER_MAX_BODY_BYTES: int = int(os.getenv("ETHER_MAX_BODY_BYTES", "1048576"))
+    ETHER_INGEST_RPM: int = int(os.getenv("ETHER_INGEST_RPM", "120"))
+    ETHER_REPLAY_TTL_SECONDS: int = int(os.getenv("ETHER_REPLAY_TTL_SECONDS", "600"))
 
     # Control-plane foundation
     ETHER_ENVIRONMENT: str = os.getenv("ETHER_ENVIRONMENT", "development")
     ETHER_PROJECT_REGISTRY_JSON: Optional[str] = _clean(os.getenv("ETHER_PROJECT_REGISTRY_JSON"))
     ETHER_ADMIN_AUDIT_LOG: bool = os.getenv("ETHER_ADMIN_AUDIT_LOG", "true").lower() == "true"
+
+    # Backward-compatible project config expected by existing Ether modules
+    ETHER_PROJECTS_JSON: Optional[str] = _clean(
+        os.getenv("ETHER_PROJECTS_JSON") or os.getenv("ETHER_PROJECT_REGISTRY_JSON")
+    )
+    ETHER_BOOTSTRAP_EXPOSE_PUBLIC_CONFIG: bool = (
+        os.getenv("ETHER_BOOTSTRAP_EXPOSE_PUBLIC_CONFIG", "false").lower() == "true"
+    )
 
 
 settings = Settings()
