@@ -52,5 +52,9 @@ class Settings:
         os.getenv("ETHER_BOOTSTRAP_EXPOSE_PUBLIC_CONFIG", "false").lower() == "true"
     )
 
+    # Sentinel AI posture (admin-only, optional until provider/credential pass)
+    ETHER_SENTINEL_AI_ENABLED: bool = os.getenv("ETHER_SENTINEL_AI_ENABLED", "false").lower() == "true"
+    ETHER_SENTINEL_AI_MODEL: str = os.getenv("ETHER_SENTINEL_AI_MODEL", "gpt-5")
+
 
 settings = Settings()
