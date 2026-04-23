@@ -66,7 +66,7 @@ def _default_projects() -> List[Dict[str, Any]]:
             "display_name": "Circa Haus",
             "status": "planned",
             "environment": settings.ETHER_ENVIRONMENT,
-            "app_ids": ["circa_haus", "aurabeta", "salute", "origin_loft"],
+            "app_ids": ["circa_haus", "aurabeta", "salute"],
             "provider_set": {
                 "supabase": True,
                 "stripe": True,
@@ -84,7 +84,8 @@ def _default_projects() -> List[Dict[str, Any]]:
                 "app_name": "Circa Haus",
                 "tagline": "The trusted home for creator independence",
                 "identity": "vintage-primary",
-                "legacy_names": ["AuraBeta", "Salute", "Origin Loft", "Circa Haus"],
+                "legacy_names": ["AuraBeta", "Salute", "Circa Haus"],
+                "conceptual_names": ["Origin Loft"],
             },
             "allowed_roles": ["supporter", "creator", "admin"],
             "admin_surface_id": "circa-haus-admin",
