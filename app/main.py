@@ -7,6 +7,7 @@ from app.middleware.errors import install_error_handlers
 from app.middleware.internal_gate import InternalOnlyGate
 
 from app.routers.auth import router as auth_router
+from app.routers.controls import router as controls_router
 from app.routers.health import router as health_router
 from app.routers.version import router as version_router
 from app.routers.ether_ingest import router as ether_ingest_router
@@ -52,6 +53,7 @@ app.include_router(db_status_router)
 app.include_router(db_test_router)
 app.include_router(projects_router)
 app.include_router(auth_router)
+app.include_router(controls_router)
 app.include_router(providers_router)
 app.include_router(webhooks_router)
 app.include_router(sentinel_router)
@@ -69,6 +71,11 @@ async def root():
             "/projects",
             "/projects/bootstrap",
             "/auth/verify",
+            "/controls",
+            "/controls/project/disable",
+            "/controls/project/enable",
+            "/controls/provider/disable",
+            "/controls/provider/enable",
             "/providers/{project_slug}",
             "/webhooks/{provider}/{project_slug}",
             "/sentinel/events",
