@@ -6,12 +6,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.middleware.errors import install_error_handlers
 from app.middleware.internal_gate import InternalOnlyGate
 
+from app.routers.auth import router as auth_router
 from app.routers.health import router as health_router
 from app.routers.version import router as version_router
 from app.routers.ether_ingest import router as ether_ingest_router
 from app.routers.db_status import router as db_status_router
 from app.routers.db_test import router as db_test_router
 from app.routers.projects import router as projects_router
+from app.routers.providers import router as providers_router
+from app.routers.webhooks import router as webhooks_router
 
 from app.utils.settings import settings
 
@@ -23,10 +26,8 @@ app = FastAPI(
     description="Sealed internal-only Ether API (contracts + ingest + observability + control plane foundation)",
 )
 
-# ---- Errors first: stable envelopes, no trace leaks ----
 install_error_handlers(app)
 
-# ---- CORS: locked down (or disabled) ----
 if settings.ETHER_CORS_MODE == "allowlist":
     app.add_middleware(
         CORSMiddleware,
@@ -36,7 +37,6 @@ if settings.ETHER_CORS_MODE == "allowlist":
         allow_headers=["*"],
     )
 
-# ---- Internal-only gate ----
 app.add_middleware(
     InternalOnlyGate,
     internal_token=settings.ETHER_INTERNAL_TOKEN,
@@ -44,13 +44,15 @@ app.add_middleware(
     exempt_prefixes=("/health", "/version", "/"),
 )
 
-# ---- Routers ----
 app.include_router(health_router)
 app.include_router(version_router)
 app.include_router(ether_ingest_router)
 app.include_router(db_status_router)
 app.include_router(db_test_router)
 app.include_router(projects_router)
+app.include_router(auth_router)
+app.include_router(providers_router)
+app.include_router(webhooks_router)
 
 @app.get("/")
 async def root():
@@ -64,6 +66,9 @@ async def root():
             "/ether/ingest",
             "/projects",
             "/projects/bootstrap",
+            "/auth/verify",
+            "/providers/{project_slug}",
+            "/webhooks/{provider}/{project_slug}",
             "/db/status",
             "/db/tables",
             "/db/write",
