@@ -7,6 +7,7 @@ from fastapi import APIRouter, Body, Request
 
 from app.schemas.errors import EtherErrorResponse
 from app.utils.audit import audit_event
+from app.utils.control_plane import control_plane_state
 from app.utils.projects import get_project
 from app.utils.provider_broker import provider_enabled
 from app.utils.request_meta import extract_request_meta
@@ -35,6 +36,34 @@ async def ingest_webhook(
             code="ETHER_PROJECT_NOT_FOUND",
             message="Project could not be resolved for webhook ingestion.",
             details={"project_slug": project_slug, "provider": provider},
+        )
+
+    if control_plane_state.project_disabled(project.slug):
+        audit_event(
+            action="webhook.ingest",
+            project_slug=project.slug,
+            actor=meta.source,
+            provider=provider,
+            result="project_disabled",
+        )
+        return EtherErrorResponse.forbidden(
+            code="ETHER_PROJECT_DISABLED",
+            message="Project is currently disabled by Ether control state.",
+            details={"project_slug": project.slug, "provider": provider},
+        )
+
+    if control_plane_state.provider_disabled(project.slug, provider):
+        audit_event(
+            action="webhook.ingest",
+            project_slug=project.slug,
+            actor=meta.source,
+            provider=provider,
+            result="provider_disabled_by_control",
+        )
+        return EtherErrorResponse.forbidden(
+            code="ETHER_PROVIDER_DISABLED_BY_CONTROL",
+            message="Provider is currently disabled by Ether control state.",
+            details={"project_slug": project.slug, "provider": provider},
         )
 
     if not provider_enabled(project_slug, provider):
