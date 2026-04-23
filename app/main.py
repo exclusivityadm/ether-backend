@@ -79,6 +79,7 @@ async def root():
             "/providers/{project_slug}",
             "/webhooks/{provider}/{project_slug}",
             "/sentinel/events",
+            "/sentinel/review",
             "/sentinel/quarantine",
             "/sentinel/quarantines",
             "/db/status",
