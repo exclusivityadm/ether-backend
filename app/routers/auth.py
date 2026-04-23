@@ -6,6 +6,7 @@ from fastapi import APIRouter, Request
 from app.schemas.auth import ProjectVerifyRequest, ProjectVerifyResponse
 from app.schemas.errors import EtherErrorResponse
 from app.utils.audit import audit_event
+from app.utils.control_plane import control_plane_state
 from app.utils.projects import resolve_project
 from app.utils.request_meta import extract_request_meta
 
@@ -40,6 +41,19 @@ async def verify_project_access(request: Request, body: ProjectVerifyRequest):
                 "domain": body.domain or host,
                 "source": meta.source,
             },
+        )
+
+    if control_plane_state.project_disabled(project.slug):
+        audit_event(
+            action="auth.verify",
+            project_slug=project.slug,
+            actor=meta.source,
+            result="project_disabled",
+        )
+        return EtherErrorResponse.forbidden(
+            code="ETHER_PROJECT_DISABLED",
+            message="Project is currently disabled by Ether control state.",
+            details={"project_slug": project.slug},
         )
 
     verified = bool(body.access_token or body.user_id)
