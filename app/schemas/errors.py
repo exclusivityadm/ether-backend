@@ -32,6 +32,10 @@ class EtherErrorResponse:
         return EtherErrorResponse._resp(403, code, message, details)
 
     @staticmethod
+    def not_found(code: str, message: str, details: Optional[Dict[str, Any]] = None) -> JSONResponse:
+        return EtherErrorResponse._resp(404, code, message, details)
+
+    @staticmethod
     def too_large(code: str, message: str, details: Optional[Dict[str, Any]] = None) -> JSONResponse:
         return EtherErrorResponse._resp(413, code, message, details)
 
