@@ -9,8 +9,12 @@ from app.schemas.sentinel import (
     QuarantineResponse,
     ThreatEventRequest,
     ThreatEventResponse,
+    ThreatReviewRequest,
+    ThreatReviewResponse,
 )
+from app.utils.admin_ai import admin_ai_reviewer
 from app.utils.audit import audit_event
+from app.utils.control_plane import control_plane_state
 from app.utils.projects import resolve_project
 from app.utils.request_meta import extract_request_meta
 from app.utils.sentinel import sentinel_engine
@@ -49,6 +53,22 @@ async def record_threat_event(request: Request, body: ThreatEventRequest):
         source_ip=body.source_ip,
         details=body.details,
     )
+
+    if record.quarantined and body.details.get("auto_disable_project"):
+        control_plane_state.disable_project(
+            project.slug,
+            reason=f"Auto-disabled after sentinel event: {body.event_type}",
+            details={"risk_score": record.risk_score, **body.details},
+        )
+    provider_name = str(body.details.get("provider") or "").strip().lower()
+    if record.quarantined and provider_name and body.details.get("auto_disable_provider"):
+        control_plane_state.disable_provider(
+            project.slug,
+            provider_name,
+            reason=f"Auto-disabled after sentinel event: {body.event_type}",
+            details={"risk_score": record.risk_score, **body.details},
+        )
+
     audit_event(
         action="sentinel.event",
         project_slug=project.slug,
@@ -59,6 +79,8 @@ async def record_threat_event(request: Request, body: ThreatEventRequest):
             "severity": record.severity,
             "risk_score": record.risk_score,
             "quarantined": record.quarantined,
+            "provider_auto_disabled": bool(record.quarantined and provider_name and body.details.get("auto_disable_provider")),
+            "project_auto_disabled": bool(record.quarantined and body.details.get("auto_disable_project")),
         },
     )
     return ThreatEventResponse(
@@ -69,6 +91,48 @@ async def record_threat_event(request: Request, body: ThreatEventRequest):
         risk_score=record.risk_score,
         disposition=record.disposition,
         quarantined=record.quarantined,
+    )
+
+
+@router.get("/events")
+async def list_threat_events(project_slug: str | None = None, limit: int = 25):
+    records = sentinel_engine.list_threats(project_slug=project_slug, limit=limit)
+    return {
+        "ok": True,
+        "count": len(records),
+        "threats": [
+            {
+                "project_slug": record.project_slug,
+                "event_type": record.event_type,
+                "severity": record.severity,
+                "risk_score": record.risk_score,
+                "disposition": record.disposition,
+                "quarantined": record.quarantined,
+                "actor_id": record.actor_id,
+                "source_ip": record.source_ip,
+                "details": record.details,
+            }
+            for record in records
+        ],
+    }
+
+
+@router.post("/review", response_model=ThreatReviewResponse)
+async def review_threats(body: ThreatReviewRequest):
+    threats = sentinel_engine.list_threats(project_slug=body.project_slug, limit=body.recent_limit)
+    quarantines = sentinel_engine.list_quarantines(project_slug=body.project_slug)
+    review = admin_ai_reviewer.review(
+        project_slug=body.project_slug,
+        threats=threats,
+        quarantines=quarantines,
+    )
+    return ThreatReviewResponse(
+        ok=True,
+        project_slug=body.project_slug,
+        ai_mode=str(review["ai_mode"]),
+        summary=str(review["summary"]),
+        recommended_actions=list(review["recommended_actions"]),
+        counts=dict(review["counts"]),
     )
 
 
