@@ -9,6 +9,7 @@ from app.utils.audit import audit_event
 from app.utils.control_plane import control_plane_state
 from app.utils.projects import resolve_project
 from app.utils.request_meta import extract_request_meta
+from app.utils.supabase_auth import verify_project_access_token
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -56,15 +57,28 @@ async def verify_project_access(request: Request, body: ProjectVerifyRequest):
             details={"project_slug": project.slug},
         )
 
-    verified = bool(body.access_token or body.user_id)
-    verification_mode = "token-present" if body.access_token else "user-id-present" if body.user_id else "stub-pending-supabase"
+    verified = False
+    verification_mode = "stub-pending-supabase"
+    verified_user_id = body.user_id
+
+    if body.access_token:
+        verified, verification_mode, resolved_user_id = verify_project_access_token(project, body.access_token)
+        if resolved_user_id:
+            verified_user_id = resolved_user_id
+    elif body.user_id:
+        verified = True
+        verification_mode = "user-id-present"
 
     audit_event(
         action="auth.verify",
         project_slug=project.slug,
         actor=meta.source,
         result="verified" if verified else "pending",
-        details={"verification_mode": verification_mode, "role_hint": body.role_hint},
+        details={
+            "verification_mode": verification_mode,
+            "role_hint": body.role_hint,
+            "supabase_ready": bool(project.supabase_url and project.supabase_anon_key_configured),
+        },
     )
 
     return ProjectVerifyResponse(
@@ -73,6 +87,6 @@ async def verify_project_access(request: Request, body: ProjectVerifyRequest):
         resolved_by="project_slug" if (body.project_slug or meta.project_slug) else "app_or_domain_or_source",
         verified=verified,
         verification_mode=verification_mode,
-        user_id=body.user_id,
+        user_id=verified_user_id,
         role_hint=body.role_hint,
     )
