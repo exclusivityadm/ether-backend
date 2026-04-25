@@ -34,6 +34,8 @@ class ProjectRecord(BaseModel):
     supabase_url: Optional[str] = None
     supabase_anon_key_configured: bool = False
     service_role_configured: bool = False
+    signal_secret_configured: bool = False
+    signal_secret_value: Optional[str] = None
 
 
 def _project_env(prefix_slug: str, suffix: str) -> Optional[str]:
@@ -50,12 +52,15 @@ def _enrich_project_secrets(payload: Dict[str, Any]) -> Dict[str, Any]:
     supabase_url = _project_env(slug, "SUPABASE_URL")
     anon_key = _project_env(slug, "SUPABASE_ANON_KEY")
     service_role_key = _project_env(slug, "SUPABASE_SERVICE_ROLE_KEY")
+    signal_secret = _project_env(slug, "ETHER_SIGNAL_SECRET") or _project_env(slug, "SIGNAL_SECRET")
 
     enriched = dict(payload)
     if supabase_url:
         enriched["supabase_url"] = supabase_url
     enriched["supabase_anon_key_configured"] = bool(anon_key)
     enriched["service_role_configured"] = bool(service_role_key)
+    enriched["signal_secret_configured"] = bool(signal_secret)
+    enriched["signal_secret_value"] = signal_secret
     return enriched
 
 
@@ -79,6 +84,8 @@ def _default_projects() -> List[Dict[str, Any]]:
                 "rebrand_required": True,
                 "provider_wiring_pending": True,
                 "sentinel_enabled": True,
+                "signal_lane_supported": True,
+                "keepalive_supported": True,
             },
             "branding": {
                 "app_name": "Circa Haus",
@@ -110,6 +117,8 @@ def _default_projects() -> List[Dict[str, Any]]:
             "feature_flags": {
                 "legacy_ingest_enabled": True,
                 "sentinel_enabled": True,
+                "signal_lane_supported": True,
+                "keepalive_supported": True,
             },
             "branding": {
                 "app_name": "Exclusivity",
@@ -134,6 +143,8 @@ def _default_projects() -> List[Dict[str, Any]]:
             "feature_flags": {
                 "legacy_ingest_enabled": True,
                 "sentinel_enabled": True,
+                "signal_lane_supported": True,
+                "keepalive_supported": True,
             },
             "branding": {
                 "app_name": "Sova",
@@ -262,11 +273,20 @@ def project_to_public_payload(project: ProjectRecord) -> Dict[str, Any]:
             "supabase_url",
             "supabase_anon_key_configured",
             "service_role_configured",
+            "signal_secret_value",
         }
     )
     enabled_providers = sorted([name for name, enabled in project.provider_set.items() if enabled])
     payload["enabled_providers"] = enabled_providers
     payload["supabase_ready"] = bool(project.supabase_url and project.supabase_anon_key_configured)
+    payload["signal_ready"] = bool(project.signal_secret_configured)
+    payload["signal"] = {
+        "handshake_path": "/signal/handshake",
+        "heartbeat_path": "/signal/heartbeat",
+        "lanes_path": "/signal/lanes",
+        "proof_required": bool(project.signal_secret_configured),
+        "next_heartbeat_seconds": 60,
+    }
 
     if settings.ETHER_BOOTSTRAP_EXPOSE_PUBLIC_CONFIG and project.supabase_url:
         payload["public_config"] = {
