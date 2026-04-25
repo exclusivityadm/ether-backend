@@ -16,6 +16,7 @@ from app.routers.db_test import router as db_test_router
 from app.routers.projects import router as projects_router
 from app.routers.providers import router as providers_router
 from app.routers.sentinel import router as sentinel_router
+from app.routers.signal import router as signal_router
 from app.routers.webhooks import router as webhooks_router
 
 from app.utils.settings import settings
@@ -25,7 +26,7 @@ log = logging.getLogger("ether_v2.main")
 app = FastAPI(
     title="Ether Backend v2",
     version=settings.ETHER_VERSION,
-    description="Sealed internal-only Ether API (contracts + ingest + observability + control plane foundation + sentinel scaffold)",
+    description="Sealed internal-only Ether API (contracts + ingest + observability + control plane foundation + sentinel scaffold + signal lane foundation)",
 )
 
 install_error_handlers(app)
@@ -57,6 +58,7 @@ app.include_router(controls_router)
 app.include_router(providers_router)
 app.include_router(webhooks_router)
 app.include_router(sentinel_router)
+app.include_router(signal_router)
 
 @app.get("/")
 async def root():
@@ -82,6 +84,9 @@ async def root():
             "/sentinel/review",
             "/sentinel/quarantine",
             "/sentinel/quarantines",
+            "/signal/handshake",
+            "/signal/heartbeat",
+            "/signal/lanes",
             "/db/status",
             "/db/tables",
             "/db/write",
@@ -90,4 +95,4 @@ async def root():
 
 @app.on_event("startup")
 async def startup_event():
-    log.info("Ether v2 starting — control-plane foundation and sentinel scaffold loaded")
+    log.info("Ether v2 starting — control-plane foundation, sentinel scaffold, and signal lane foundation loaded")
