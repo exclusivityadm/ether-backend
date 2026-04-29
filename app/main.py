@@ -21,6 +21,7 @@ from app.routers.sentinel import router as sentinel_router
 from app.routers.signal import router as signal_router
 from app.routers.webhooks import router as webhooks_router
 
+from app.utils.audit import initialize_audit
 from app.utils.settings import settings
 
 log = logging.getLogger("ether_v2.main")
@@ -78,7 +79,14 @@ async def root():
             "/projects/bootstrap",
             "/readiness",
             "/readiness/{project_slug}",
+            "/operations/suite/status",
+            "/operations/suite/smoke",
+            "/operations/cron/status",
+            "/operations/cron/signal",
+            "/operations/audit/recent",
+            "/operations/audit/summary",
             "/operations/signal/readiness",
+            "/operations/signal/all",
             "/operations/signal/{project_slug}",
             "/auth/verify",
             "/controls",
@@ -103,4 +111,5 @@ async def root():
 
 @app.on_event("startup")
 async def startup_event():
-    log.info("Ether v2 starting — control-plane foundation, sentinel scaffold, signal lane foundation, readiness checks, and operations loaded")
+    initialize_audit()
+    log.info("Ether v2 starting — control-plane foundation, sentinel scaffold, signal lane foundation, readiness checks, operations, and persistent audit loaded")
