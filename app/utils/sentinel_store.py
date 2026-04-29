@@ -72,6 +72,7 @@ def init_sentinel_store() -> None:
         conn.execute("create index if not exists sentinel_threats_disposition_idx on sentinel_threats (disposition, created_at desc)")
         conn.execute("create index if not exists sentinel_quarantines_project_status_idx on sentinel_quarantines (project_slug, status)")
         conn.execute("create index if not exists sentinel_quarantines_target_idx on sentinel_quarantines (target_type, target_id)")
+        conn.execute("create index if not exists sentinel_quarantines_enforcement_idx on sentinel_quarantines (project_slug, target_type, target_id, status)")
 
 
 def _json(value: Dict[str, Any]) -> str:
@@ -183,6 +184,29 @@ def list_quarantine_rows(project_slug: Optional[str] = None, status: Optional[st
     return [_quarantine_row(row) for row in rows]
 
 
+def find_active_quarantines(
+    *,
+    project_slug: str,
+    target_type: Optional[str] = None,
+    target_id: Optional[str] = None,
+    limit: int = 50,
+) -> List[Dict[str, Any]]:
+    init_sentinel_store()
+    clauses = ["project_slug = ?", "status = 'active'"]
+    params: list[Any] = [project_slug.strip().lower()]
+    if target_type:
+        clauses.append("target_type = ?")
+        params.append(target_type.strip().lower())
+    if target_id:
+        clauses.append("target_id = ?")
+        params.append(target_id.strip())
+    where = f"where {' and '.join(clauses)}"
+    params.append(max(1, min(limit, 500)))
+    with _connect() as conn:
+        rows = conn.execute(f"select * from sentinel_quarantines {where} order by created_at desc, id desc limit ?", params).fetchall()
+    return [_quarantine_row(row) for row in rows]
+
+
 def mark_threat_reviewed(*, threat_id: int, reviewer: Optional[str], status: str, review_notes: Optional[str], reviewed_at: str) -> Optional[Dict[str, Any]]:
     init_sentinel_store()
     with _connect() as conn:
@@ -224,10 +248,17 @@ def sentinel_snapshot(project_slug: Optional[str] = None) -> Dict[str, Any]:
     quarantine_status_counts: Dict[str, int] = {}
     for quarantine in quarantines:
         quarantine_status_counts[quarantine["status"]] = quarantine_status_counts.get(quarantine["status"], 0) + 1
+    active_by_target: Dict[str, int] = {}
+    for quarantine in quarantines:
+        if quarantine.get("status") != "active":
+            continue
+        key = f"{quarantine.get('target_type')}:{quarantine.get('target_id')}"
+        active_by_target[key] = active_by_target.get(key, 0) + 1
     return {
         "project_slug": project_slug,
         "threat_count": len(threats),
         "quarantine_count": len(quarantines),
+        "active_quarantine_by_target": active_by_target,
         "threat_status_counts": threat_status_counts,
         "disposition_counts": disposition_counts,
         "quarantine_status_counts": quarantine_status_counts,
