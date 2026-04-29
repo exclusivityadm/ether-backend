@@ -10,6 +10,7 @@ class ProjectControlRequest(BaseModel):
     project_slug: str
     reason: str
     details: Dict[str, Any] = Field(default_factory=dict)
+    incident_id: Optional[str] = None
 
 
 class ProviderControlRequest(BaseModel):
@@ -17,6 +18,16 @@ class ProviderControlRequest(BaseModel):
     provider: str
     reason: str
     details: Dict[str, Any] = Field(default_factory=dict)
+    incident_id: Optional[str] = None
+
+
+class ControlRecoveryRequest(BaseModel):
+    project_slug: str
+    reason: str
+    details: Dict[str, Any] = Field(default_factory=dict)
+    incident_id: Optional[str] = None
+    providers: list[str] = Field(default_factory=list)
+    enable_project: bool = True
 
 
 class ControlActionResponse(BaseModel):
@@ -26,3 +37,6 @@ class ControlActionResponse(BaseModel):
     provider: Optional[str] = None
     status: str
     reason: str
+    incident_id: Optional[str] = None
+    recovery_required: bool = False
+    recovery_notes: list[str] = Field(default_factory=list)
