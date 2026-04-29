@@ -9,6 +9,7 @@ from app.utils.audit import audit_event
 from app.utils.project_supabase_signal import build_signal_payload, project_signal_readiness, record_project_signal
 from app.utils.projects import get_project, list_projects
 from app.utils.request_meta import extract_request_meta
+from app.utils.signal_lane import signal_lane_registry
 
 router = APIRouter(prefix="/operations", tags=["operations"])
 
@@ -27,11 +28,62 @@ class MultiProjectSignalOperationRequest(ProjectSignalOperationRequest):
     include_unconfigured: bool = True
 
 
+@router.get("/suite/status")
+async def suite_operations_status():
+    projects = list_projects()
+    rows = []
+    ready_count = 0
+    configured_count = 0
+    active_lane_count = 0
+
+    for project in projects:
+      readiness = project_signal_readiness(project.slug).to_dict()
+      lanes = signal_lane_registry.list_lanes(project_slug=project.slug, limit=10)
+      enabled_providers = sorted([name for name, enabled in project.provider_set.items() if enabled])
+      ready_for_real_signal = bool(readiness.get("ready_for_real_signal"))
+      fully_configured = bool(readiness.get("supabase_url_configured")) and bool(readiness.get("service_role_configured")) and bool(readiness.get("signal_secret_configured"))
+      ready_count += 1 if ready_for_real_signal else 0
+      configured_count += 1 if fully_configured else 0
+      active_lane_count += len(lanes)
+      rows.append({
+          "slug": project.slug,
+          "display_name": project.display_name,
+          "status": project.status,
+          "enabled_providers": enabled_providers,
+          "feature_flags": project.feature_flags,
+          "signal_readiness": readiness,
+          "recent_lanes": lanes,
+          "recent_lane_count": len(lanes),
+      })
+
+    suite_ready = ready_count >= 2
+    return {
+        "ok": True,
+        "suite_ready_for_core_signal": suite_ready,
+        "summary": {
+            "project_count": len(projects),
+            "ready_for_real_signal_count": ready_count,
+            "fully_configured_signal_secret_count": configured_count,
+            "recent_lane_count": active_lane_count,
+            "core_projects_expected": ["circa_haus", "exclusivity"],
+        },
+        "next_actions": [
+            "Set project Supabase URL and service role variables in Render for Circa Haus and Exclusivity.",
+            "Apply supabase/ether_signal_support.sql inside each connected Supabase project.",
+            "Set per-project Ether signal secrets before requiring proof mode.",
+            "Run POST /operations/signal/all for a multi-project smoke test.",
+            "Confirm rows appear in each project's ether_signals table.",
+        ],
+        "projects": rows,
+    }
+
+
 @router.get("/signal/readiness")
 async def signal_readiness_index():
     return {
         "ok": True,
         "routes": {
+            "suite_status": "/operations/suite/status",
             "all_project_readiness": "/readiness",
             "project_readiness": "/readiness/{project_slug}",
             "manual_project_signal": "/operations/signal/{project_slug}",
