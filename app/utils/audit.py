@@ -6,6 +6,13 @@ from datetime import datetime, timezone
 from threading import Lock
 from typing import Any, Dict, List, Optional
 
+from app.utils.audit_store import (
+    init_audit_store,
+    list_persistent_audit_events,
+    persist_audit_event,
+    persistent_audit_snapshot,
+)
+
 log = logging.getLogger("ether_v2.audit")
 
 _MAX_RECENT_EVENTS = 300
@@ -32,8 +39,24 @@ def audit_event(
     }
     with _recent_events_lock:
         _recent_events.appendleft(event)
+    try:
+        persist_audit_event(event)
+    except Exception as exc:
+        log.warning("ether_audit_persist_failed=%s", exc)
     log.info("ether_audit_event=%s", event)
     return event
+
+
+def initialize_audit() -> None:
+    try:
+        init_audit_store()
+        audit_event(
+            action="audit.initialize",
+            result="ok",
+            details={"storage": "sqlite", "mode": "persistent-plus-memory"},
+        )
+    except Exception as exc:
+        log.warning("ether_audit_initialize_failed=%s", exc)
 
 
 def list_recent_audit_events(
@@ -42,7 +65,14 @@ def list_recent_audit_events(
     project_slug: Optional[str] = None,
     action: Optional[str] = None,
     result: Optional[str] = None,
+    include_persistent: bool = True,
 ) -> List[Dict[str, Any]]:
+    if include_persistent:
+        try:
+            return list_persistent_audit_events(limit=limit, project_slug=project_slug, action=action, result=result)
+        except Exception as exc:
+            log.warning("ether_audit_persistent_read_failed=%s", exc)
+
     safe_limit = max(1, min(limit, _MAX_RECENT_EVENTS))
     project_filter = (project_slug or "").strip().lower()
     action_filter = (action or "").strip().lower()
@@ -65,8 +95,17 @@ def list_recent_audit_events(
     return filtered
 
 
-def audit_snapshot(limit: int = 25) -> Dict[str, Any]:
-    events = list_recent_audit_events(limit=limit)
+def audit_snapshot(limit: int = 25, include_persistent: bool = True) -> Dict[str, Any]:
+    if include_persistent:
+        try:
+            snapshot = persistent_audit_snapshot(limit=limit)
+            snapshot["fallback_memory_recent_count"] = len(_recent_events)
+            snapshot["retention"] = "persistent sqlite audit store plus in-memory recent buffer; move to managed Postgres/Supabase audit table when production scale requires it"
+            return snapshot
+        except Exception as exc:
+            log.warning("ether_audit_persistent_snapshot_failed=%s", exc)
+
+    events = list_recent_audit_events(limit=limit, include_persistent=False)
     action_counts: Dict[str, int] = {}
     project_counts: Dict[str, int] = {}
     result_counts: Dict[str, int] = {}
@@ -78,7 +117,7 @@ def audit_snapshot(limit: int = 25) -> Dict[str, Any]:
         project_counts[project_key] = project_counts.get(project_key, 0) + 1
         result_counts[result_key] = result_counts.get(result_key, 0) + 1
     return {
-        "retention": "in-memory recent events only; use provider/runtime logs for durable production audit until persistent storage is added",
+        "retention": "in-memory fallback recent events only; persistent audit store was unavailable",
         "max_recent_events": _MAX_RECENT_EVENTS,
         "included_recent_events": len(events),
         "action_counts": action_counts,
