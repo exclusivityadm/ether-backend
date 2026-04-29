@@ -25,6 +25,21 @@ class ProjectSignalWriteResult:
         return asdict(self)
 
 
+@dataclass(frozen=True)
+class ProjectSignalReadiness:
+    project_slug: str
+    supabase_url_configured: bool
+    service_role_configured: bool
+    signal_secret_configured: bool
+    rpc_name: str
+    table_name: str
+    ready_for_real_signal: bool
+    notes: list[str]
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
 def _env_key(project_slug: str, suffix: str) -> str:
     return f"{project_slug.strip().upper()}_{suffix.strip().upper()}"
 
@@ -46,6 +61,36 @@ def _safe_error(exc: Exception) -> str:
     if not text:
         return exc.__class__.__name__
     return text[:240]
+
+
+def project_signal_readiness(project_slug: str) -> ProjectSignalReadiness:
+    slug = project_slug.strip().lower()
+    url_configured = bool(_env(slug, "SUPABASE_URL"))
+    service_role_configured = bool(_env(slug, "SUPABASE_SERVICE_ROLE_KEY"))
+    signal_secret_configured = bool(_env(slug, "ETHER_SIGNAL_SECRET") or _env(slug, "SIGNAL_SECRET"))
+    rpc_name = _env(slug, "SIGNAL_RPC", "ether_signal") or "ether_signal"
+    table_name = _env(slug, "SIGNAL_TABLE", "ether_signals") or "ether_signals"
+    notes: list[str] = []
+
+    if not url_configured:
+        notes.append(f"{_env_key(slug, 'SUPABASE_URL')} is missing.")
+    if not service_role_configured:
+        notes.append(f"{_env_key(slug, 'SUPABASE_SERVICE_ROLE_KEY')} is missing.")
+    if not signal_secret_configured:
+        notes.append(f"{_env_key(slug, 'ETHER_SIGNAL_SECRET')} is missing; proof mode can remain pending until configured.")
+    if not notes:
+        notes.append("Project signal lane has the required server-side configuration for real Supabase activity.")
+
+    return ProjectSignalReadiness(
+        project_slug=slug,
+        supabase_url_configured=url_configured,
+        service_role_configured=service_role_configured,
+        signal_secret_configured=signal_secret_configured,
+        rpc_name=rpc_name,
+        table_name=table_name,
+        ready_for_real_signal=url_configured and service_role_configured,
+        notes=notes,
+    )
 
 
 def build_signal_payload(
