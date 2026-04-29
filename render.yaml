@@ -1,0 +1,56 @@
+services:
+  - type: web
+    name: ether-backend
+    runtime: python
+    plan: starter
+    region: oregon
+    branch: main
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: ETHER_ENVIRONMENT
+        value: production
+      - key: ETHER_VERSION
+        value: 2.1.0-foundation
+      - key: ETHER_CORS_MODE
+        value: none
+      - key: ETHER_ALLOWED_SOURCES
+        value: exclusivity,circa_haus,admin
+      - key: ETHER_MAX_BODY_BYTES
+        value: "1048576"
+      - key: ETHER_INGEST_RPM
+        value: "120"
+      - key: ETHER_REPLAY_TTL_SECONDS
+        value: "600"
+      - key: ETHER_ADMIN_AUDIT_LOG
+        value: "true"
+      - key: ETHER_BOOTSTRAP_EXPOSE_PUBLIC_CONFIG
+        value: "false"
+      - key: ETHER_SENTINEL_AI_ENABLED
+        value: "false"
+      - key: ETHER_SENTINEL_AI_MODEL
+        value: gpt-5.5-thinking
+      - key: ETHER_INTERNAL_TOKEN
+        sync: false
+      - key: CIRCA_HAUS_SUPABASE_URL
+        sync: false
+      - key: CIRCA_HAUS_SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: CIRCA_HAUS_ETHER_SIGNAL_SECRET
+        sync: false
+      - key: CIRCA_HAUS_SIGNAL_RPC
+        value: ether_signal
+      - key: CIRCA_HAUS_SIGNAL_TABLE
+        value: ether_signals
+      - key: EXCLUSIVITY_SUPABASE_URL
+        sync: false
+      - key: EXCLUSIVITY_SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: EXCLUSIVITY_ETHER_SIGNAL_SECRET
+        sync: false
+      - key: EXCLUSIVITY_SIGNAL_RPC
+        value: ether_signal
+      - key: EXCLUSIVITY_SIGNAL_TABLE
+        value: ether_signals
