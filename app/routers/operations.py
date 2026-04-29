@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
 
-from app.utils.audit import audit_event
+from app.utils.audit import audit_event, audit_snapshot, list_recent_audit_events
 from app.utils.project_supabase_signal import build_signal_payload, project_signal_readiness, record_project_signal
 from app.utils.projects import get_project, list_projects
 from app.utils.request_meta import extract_request_meta
@@ -28,53 +28,98 @@ class MultiProjectSignalOperationRequest(ProjectSignalOperationRequest):
     include_unconfigured: bool = True
 
 
-@router.get("/suite/status")
-async def suite_operations_status():
+class SuiteSmokeTestRequest(BaseModel):
+    project_slugs: List[str] = Field(default_factory=lambda: ["circa_haus", "exclusivity"])
+    include_unconfigured: bool = True
+    signal_kind: str = "suite_smoke_test"
+    status: str = "ok"
+    meta: Dict[str, Any] = Field(default_factory=dict)
+
+
+def _project_status_rows() -> tuple[list[dict[str, Any]], dict[str, Any]]:
     projects = list_projects()
-    rows = []
+    rows: list[dict[str, Any]] = []
     ready_count = 0
     configured_count = 0
     active_lane_count = 0
 
     for project in projects:
-      readiness = project_signal_readiness(project.slug).to_dict()
-      lanes = signal_lane_registry.list_lanes(project_slug=project.slug, limit=10)
-      enabled_providers = sorted([name for name, enabled in project.provider_set.items() if enabled])
-      ready_for_real_signal = bool(readiness.get("ready_for_real_signal"))
-      fully_configured = bool(readiness.get("supabase_url_configured")) and bool(readiness.get("service_role_configured")) and bool(readiness.get("signal_secret_configured"))
-      ready_count += 1 if ready_for_real_signal else 0
-      configured_count += 1 if fully_configured else 0
-      active_lane_count += len(lanes)
-      rows.append({
-          "slug": project.slug,
-          "display_name": project.display_name,
-          "status": project.status,
-          "enabled_providers": enabled_providers,
-          "feature_flags": project.feature_flags,
-          "signal_readiness": readiness,
-          "recent_lanes": lanes,
-          "recent_lane_count": len(lanes),
-      })
+        readiness = project_signal_readiness(project.slug).to_dict()
+        lanes = signal_lane_registry.list_lanes(project_slug=project.slug, limit=10)
+        enabled_providers = sorted([name for name, enabled in project.provider_set.items() if enabled])
+        ready_for_real_signal = bool(readiness.get("ready_for_real_signal"))
+        fully_configured = (
+            bool(readiness.get("supabase_url_configured"))
+            and bool(readiness.get("service_role_configured"))
+            and bool(readiness.get("signal_secret_configured"))
+        )
+        ready_count += 1 if ready_for_real_signal else 0
+        configured_count += 1 if fully_configured else 0
+        active_lane_count += len(lanes)
+        rows.append(
+            {
+                "slug": project.slug,
+                "display_name": project.display_name,
+                "status": project.status,
+                "enabled_providers": enabled_providers,
+                "feature_flags": project.feature_flags,
+                "signal_readiness": readiness,
+                "recent_lanes": lanes,
+                "recent_lane_count": len(lanes),
+            }
+        )
 
-    suite_ready = ready_count >= 2
+    summary = {
+        "project_count": len(projects),
+        "ready_for_real_signal_count": ready_count,
+        "fully_configured_signal_secret_count": configured_count,
+        "recent_lane_count": active_lane_count,
+        "core_projects_expected": ["circa_haus", "exclusivity"],
+    }
+    return rows, summary
+
+
+@router.get("/suite/status")
+async def suite_operations_status():
+    rows, summary = _project_status_rows()
+    suite_ready = summary["ready_for_real_signal_count"] >= 2
     return {
         "ok": True,
         "suite_ready_for_core_signal": suite_ready,
-        "summary": {
-            "project_count": len(projects),
-            "ready_for_real_signal_count": ready_count,
-            "fully_configured_signal_secret_count": configured_count,
-            "recent_lane_count": active_lane_count,
-            "core_projects_expected": ["circa_haus", "exclusivity"],
-        },
+        "summary": summary,
+        "audit": audit_snapshot(limit=12),
         "next_actions": [
             "Set project Supabase URL and service role variables in Render for Circa Haus and Exclusivity.",
             "Apply supabase/ether_signal_support.sql inside each connected Supabase project.",
             "Set per-project Ether signal secrets before requiring proof mode.",
-            "Run POST /operations/signal/all for a multi-project smoke test.",
+            "Run POST /operations/suite/smoke for a bundled readiness + signal + audit smoke test.",
             "Confirm rows appear in each project's ether_signals table.",
         ],
         "projects": rows,
+    }
+
+
+@router.get("/audit/recent")
+async def recent_audit_events(
+    limit: int = 50,
+    project_slug: Optional[str] = None,
+    action: Optional[str] = None,
+    result: Optional[str] = None,
+):
+    events = list_recent_audit_events(limit=limit, project_slug=project_slug, action=action, result=result)
+    return {
+        "ok": True,
+        "count": len(events),
+        "events": events,
+        "note": "Recent in-memory audit events only. Use runtime/provider logs for durable production audit until persistent audit storage is added.",
+    }
+
+
+@router.get("/audit/summary")
+async def audit_summary(limit: int = 50):
+    return {
+        "ok": True,
+        "audit": audit_snapshot(limit=limit),
     }
 
 
@@ -84,12 +129,15 @@ async def signal_readiness_index():
         "ok": True,
         "routes": {
             "suite_status": "/operations/suite/status",
+            "suite_smoke_test": "/operations/suite/smoke",
+            "audit_recent": "/operations/audit/recent",
+            "audit_summary": "/operations/audit/summary",
             "all_project_readiness": "/readiness",
             "project_readiness": "/readiness/{project_slug}",
             "manual_project_signal": "/operations/signal/{project_slug}",
             "manual_multi_project_signal": "/operations/signal/all",
         },
-        "intended_use": "Internal-only readiness and manual signal operations for Render Cron, admin smoke tests, and wiring-day verification.",
+        "intended_use": "Internal-only readiness, audit visibility, manual signal operations, Render Cron, admin smoke tests, and wiring-day verification.",
     }
 
 
@@ -159,9 +207,7 @@ def _trigger_for_project(project_slug: str, body: ProjectSignalOperationRequest,
     }
 
 
-@router.post("/signal/all")
-async def trigger_all_project_signals(body: MultiProjectSignalOperationRequest, request: Request):
-    meta = extract_request_meta(request)
+def _trigger_many(body: MultiProjectSignalOperationRequest, actor: Optional[str]) -> Dict[str, Any]:
     requested = [slug.strip().lower() for slug in body.project_slugs if slug.strip()]
     if not requested:
         requested = [project.slug for project in list_projects()]
@@ -170,20 +216,22 @@ async def trigger_all_project_signals(body: MultiProjectSignalOperationRequest, 
     for slug in requested:
         readiness = project_signal_readiness(slug).to_dict()
         if not body.include_unconfigured and not readiness.get("ready_for_real_signal"):
-            results.append({
-                "ok": False,
-                "project_slug": slug,
-                "skipped": True,
-                "reason": "Project signal configuration is incomplete.",
-                "readiness": readiness,
-            })
+            results.append(
+                {
+                    "ok": False,
+                    "project_slug": slug,
+                    "skipped": True,
+                    "reason": "Project signal configuration is incomplete.",
+                    "readiness": readiness,
+                }
+            )
             continue
-        results.append(_trigger_for_project(slug, body, meta.source))
+        results.append(_trigger_for_project(slug, body, actor))
 
     ok_count = sum(1 for item in results if item.get("ok"))
     audit_event(
         action="operations.project_signal_all",
-        actor=meta.source,
+        actor=actor,
         result="ok" if ok_count == len(results) and results else "partial-or-failed",
         details={
             "requested": requested,
@@ -197,6 +245,56 @@ async def trigger_all_project_signals(body: MultiProjectSignalOperationRequest, 
         "total": len(results),
         "results": results,
     }
+
+
+@router.post("/suite/smoke")
+async def suite_smoke_test(body: SuiteSmokeTestRequest, request: Request):
+    meta = extract_request_meta(request)
+    before_rows, before_summary = _project_status_rows()
+    signal_body = MultiProjectSignalOperationRequest(
+        project_slugs=body.project_slugs,
+        include_unconfigured=body.include_unconfigured,
+        signal_kind=body.signal_kind,
+        status=body.status,
+        meta={
+            "suite_smoke_test": True,
+            **body.meta,
+        },
+    )
+    signal_result = _trigger_many(signal_body, meta.source)
+    after_rows, after_summary = _project_status_rows()
+    audit = audit_snapshot(limit=25)
+    ok = bool(signal_result.get("ok"))
+    audit_event(
+        action="operations.suite_smoke_test",
+        actor=meta.source,
+        result="ok" if ok else "partial-or-failed",
+        details={
+            "signal_ok": ok,
+            "ok_count": signal_result.get("ok_count"),
+            "total": signal_result.get("total"),
+            "before_summary": before_summary,
+            "after_summary": after_summary,
+        },
+    )
+    return {
+        "ok": ok,
+        "before": {"summary": before_summary, "projects": before_rows},
+        "signal": signal_result,
+        "after": {"summary": after_summary, "projects": after_rows},
+        "audit": audit,
+        "operator_notes": [
+            "If signal.ok is false because projects are not configured, wire Render env vars and apply Supabase SQL first.",
+            "If signal writes succeed, confirm rows in each project ether_signals table.",
+            "If a project is missing, verify the project registry and slug spelling.",
+        ],
+    }
+
+
+@router.post("/signal/all")
+async def trigger_all_project_signals(body: MultiProjectSignalOperationRequest, request: Request):
+    meta = extract_request_meta(request)
+    return _trigger_many(body, meta.source)
 
 
 @router.post("/signal/{project_slug}")
