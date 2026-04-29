@@ -11,6 +11,7 @@ from app.schemas.signal import (
 )
 from app.utils.audit import audit_event
 from app.utils.control_plane import control_plane_state
+from app.utils.project_supabase_signal import build_signal_payload, record_project_signal
 from app.utils.projects import resolve_project
 from app.utils.request_meta import extract_request_meta
 from app.utils.signal_lane import signal_lane_registry
@@ -143,6 +144,27 @@ async def signal_heartbeat(request: Request, body: SignalHeartbeatRequest):
             details={"project_slug": project.slug, "lane_id": body.lane_id},
         )
 
+    project_signal = {
+        "attempted": False,
+        "configured": False,
+        "ok": False,
+        "mode": "not_attempted",
+    }
+
+    if result.accepted:
+        payload = build_signal_payload(
+            project_slug=project.slug,
+            lane_id=body.lane_id,
+            status=body.status,
+            source=meta.source,
+            app_id=body.app_id or meta.app_id,
+            instance_id=body.instance_id or result.record.instance_id,
+            heartbeat_count=result.record.heartbeat_count,
+            verified=result.verified,
+            meta=body.meta,
+        )
+        project_signal = record_project_signal(project_slug=project.slug, payload=payload).to_dict()
+
     audit_event(
         action="signal.heartbeat",
         project_slug=project.slug,
@@ -152,6 +174,7 @@ async def signal_heartbeat(request: Request, body: SignalHeartbeatRequest):
             "lane_id": body.lane_id,
             "verification_mode": result.verification_mode,
             "status": body.status,
+            "project_signal": project_signal,
         },
     )
 
@@ -163,11 +186,12 @@ async def signal_heartbeat(request: Request, body: SignalHeartbeatRequest):
         verified=result.verified,
         verification_mode=result.verification_mode,
         proof_required=result.proof_required,
-        keepalive_recorded=result.keepalive_recorded,
+        keepalive_recorded=result.keepalive_recorded and bool(project_signal.get("ok")),
         server_nonce=result.record.server_nonce,
         next_heartbeat_seconds=60,
         control_state={"project_disabled": control_plane_state.project_disabled(project.slug)},
         provider_controls=_provider_controls(project.slug, project.provider_set),
+        project_signal=project_signal,
     )
 
 
