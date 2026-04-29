@@ -6,6 +6,7 @@ from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
 
 from app.utils.audit import audit_event, audit_snapshot, list_recent_audit_events
+from app.utils.production_gate import production_gate_snapshot
 from app.utils.project_supabase_signal import build_signal_payload, project_signal_readiness, record_and_verify_project_signal
 from app.utils.projects import get_project, list_projects
 from app.utils.request_meta import extract_request_meta
@@ -105,6 +106,46 @@ def _project_status_rows() -> tuple[list[dict[str, Any]], dict[str, Any]]:
     return rows, summary
 
 
+@router.get("/production/gate")
+async def production_gate():
+    result = production_gate_snapshot()
+    audit_event(
+        action="operations.production_gate",
+        result=result.get("decision", "unknown"),
+        details={
+            "blocker_count": result.get("blocker_count"),
+            "soft_warning_count": result.get("soft_warning_count"),
+            "blockers": result.get("blockers", [])[:20],
+        },
+    )
+    return result
+
+
+@router.get("/production/checklist")
+async def production_checklist():
+    gate = production_gate_snapshot()
+    return {
+        "ok": True,
+        "decision": gate.get("decision"),
+        "checklist": [
+            {"item": "Deploy Ether web service on Render", "route": "/health", "required": True},
+            {"item": "Verify Ether version", "route": "/version", "required": True},
+            {"item": "Confirm internal routes are token protected", "route": "/controls/summary", "required": True},
+            {"item": "Apply Supabase signal SQL to Circa Haus", "route": "/readiness/circa_haus", "required": True},
+            {"item": "Apply Supabase signal SQL to Exclusivity", "route": "/readiness/exclusivity", "required": True},
+            {"item": "Run suite smoke test", "route": "/operations/suite/smoke", "required": True},
+            {"item": "Run cron signal test", "route": "/operations/cron/signal", "required": True},
+            {"item": "Confirm signal health", "route": "/operations/signal/health", "required": True},
+            {"item": "Confirm no control blockers", "route": "/controls/blockers", "required": True},
+            {"item": "Confirm provider readiness", "route": "/providers/readiness/suite", "required": True},
+            {"item": "Confirm Sentinel is clear", "route": "/sentinel/status", "required": True},
+            {"item": "Confirm webhook status", "route": "/webhooks/status", "required": True},
+            {"item": "Confirm production gate", "route": "/operations/production/gate", "required": True},
+        ],
+        "current_gate": gate,
+    }
+
+
 @router.get("/suite/status")
 async def suite_operations_status():
     rows, summary = _project_status_rows()
@@ -113,6 +154,7 @@ async def suite_operations_status():
         "ok": True,
         "suite_ready_for_core_signal": suite_ready,
         "summary": summary,
+        "production_gate": production_gate_snapshot(include_soft_warnings=False),
         "signal_verification": signal_verification_snapshot(),
         "audit": audit_snapshot(limit=12),
         "cron": {
@@ -127,7 +169,7 @@ async def suite_operations_status():
             "Set per-project Ether signal secrets before requiring proof mode.",
             "Run POST /operations/suite/smoke for a bundled readiness + signal + audit smoke test.",
             "Run POST /operations/cron/signal when cron env and Supabase support are ready.",
-            "Confirm verified signal runs appear in /operations/signal/history.",
+            "Confirm /operations/production/gate returns decision=go before placing Ether in front of Circa Haus.",
         ],
         "projects": rows,
     }
@@ -154,6 +196,7 @@ async def cron_status():
         "summary": summary,
         "signal_verification": verification,
         "routes": {
+            "production_gate": "/operations/production/gate",
             "cron_signal": "/operations/cron/signal",
             "suite_smoke": "/operations/suite/smoke",
             "suite_status": "/operations/suite/status",
@@ -201,6 +244,7 @@ async def cron_signal(body: CronSignalRequest, request: Request):
         "cron_ready_after_run": bool(result.get("ok")),
         "signal": result,
         "signal_verification": signal_verification_snapshot(),
+        "production_gate": production_gate_snapshot(include_soft_warnings=False),
         "audit": audit_snapshot(limit=12),
         "operator_notes": [
             "If ok is true, write + readback verification succeeded for every requested project.",
@@ -272,6 +316,8 @@ async def signal_readiness_index():
     return {
         "ok": True,
         "routes": {
+            "production_gate": "/operations/production/gate",
+            "production_checklist": "/operations/production/checklist",
             "suite_status": "/operations/suite/status",
             "suite_smoke_test": "/operations/suite/smoke",
             "cron_status": "/operations/cron/status",
@@ -285,7 +331,7 @@ async def signal_readiness_index():
             "manual_project_signal": "/operations/signal/{project_slug}",
             "manual_multi_project_signal": "/operations/signal/all",
         },
-        "intended_use": "Internal-only readiness, verified signal history, audit visibility, manual signal operations, Render Cron, admin smoke tests, and wiring-day verification.",
+        "intended_use": "Internal-only readiness, production gate, verified signal history, audit visibility, manual signal operations, Render Cron, admin smoke tests, and wiring-day verification.",
     }
 
 
@@ -431,11 +477,13 @@ async def suite_smoke_test(body: SuiteSmokeTestRequest, request: Request):
         "signal": signal_result,
         "after": {"summary": after_summary, "projects": after_rows},
         "signal_verification": signal_verification_snapshot(),
+        "production_gate": production_gate_snapshot(include_soft_warnings=False),
         "audit": audit,
         "operator_notes": [
             "If signal.ok is false because projects are not configured, wire Render env vars and apply Supabase SQL first.",
             "If signal writes fail, inspect write_result in /operations/signal/history.",
             "If readback fails, inspect Supabase table/RPC permissions and ether_signals rows.",
+            "Final launch requires /operations/production/gate decision=go.",
         ],
     }
 
