@@ -14,6 +14,9 @@ from app.utils.signal_lane import signal_lane_registry
 router = APIRouter(prefix="/operations", tags=["operations"])
 
 
+CORE_SIGNAL_PROJECTS = ["circa_haus", "exclusivity"]
+
+
 class ProjectSignalOperationRequest(BaseModel):
     signal_kind: str = "manual"
     status: str = "ok"
@@ -24,15 +27,23 @@ class ProjectSignalOperationRequest(BaseModel):
 
 
 class MultiProjectSignalOperationRequest(ProjectSignalOperationRequest):
-    project_slugs: List[str] = Field(default_factory=lambda: ["circa_haus", "exclusivity"])
+    project_slugs: List[str] = Field(default_factory=lambda: list(CORE_SIGNAL_PROJECTS))
     include_unconfigured: bool = True
 
 
 class SuiteSmokeTestRequest(BaseModel):
-    project_slugs: List[str] = Field(default_factory=lambda: ["circa_haus", "exclusivity"])
+    project_slugs: List[str] = Field(default_factory=lambda: list(CORE_SIGNAL_PROJECTS))
     include_unconfigured: bool = True
     signal_kind: str = "suite_smoke_test"
     status: str = "ok"
+    meta: Dict[str, Any] = Field(default_factory=dict)
+
+
+class CronSignalRequest(BaseModel):
+    project_slugs: List[str] = Field(default_factory=lambda: list(CORE_SIGNAL_PROJECTS))
+    signal_kind: str = "cron_keepalive"
+    status: str = "ok"
+    include_unconfigured: bool = False
     meta: Dict[str, Any] = Field(default_factory=dict)
 
 
@@ -42,6 +53,7 @@ def _project_status_rows() -> tuple[list[dict[str, Any]], dict[str, Any]]:
     ready_count = 0
     configured_count = 0
     active_lane_count = 0
+    core_ready_count = 0
 
     for project in projects:
         readiness = project_signal_readiness(project.slug).to_dict()
@@ -56,6 +68,8 @@ def _project_status_rows() -> tuple[list[dict[str, Any]], dict[str, Any]]:
         ready_count += 1 if ready_for_real_signal else 0
         configured_count += 1 if fully_configured else 0
         active_lane_count += len(lanes)
+        if project.slug in CORE_SIGNAL_PROJECTS and ready_for_real_signal:
+            core_ready_count += 1
         rows.append(
             {
                 "slug": project.slug,
@@ -74,7 +88,9 @@ def _project_status_rows() -> tuple[list[dict[str, Any]], dict[str, Any]]:
         "ready_for_real_signal_count": ready_count,
         "fully_configured_signal_secret_count": configured_count,
         "recent_lane_count": active_lane_count,
-        "core_projects_expected": ["circa_haus", "exclusivity"],
+        "core_projects_expected": list(CORE_SIGNAL_PROJECTS),
+        "core_ready_for_real_signal_count": core_ready_count,
+        "core_ready_for_cron": core_ready_count == len(CORE_SIGNAL_PROJECTS),
     }
     return rows, summary
 
@@ -82,20 +98,91 @@ def _project_status_rows() -> tuple[list[dict[str, Any]], dict[str, Any]]:
 @router.get("/suite/status")
 async def suite_operations_status():
     rows, summary = _project_status_rows()
-    suite_ready = summary["ready_for_real_signal_count"] >= 2
+    suite_ready = summary["core_ready_for_cron"]
     return {
         "ok": True,
         "suite_ready_for_core_signal": suite_ready,
         "summary": summary,
         "audit": audit_snapshot(limit=12),
+        "cron": {
+            "ready": suite_ready,
+            "status_route": "/operations/cron/status",
+            "signal_route": "/operations/cron/signal",
+            "expected_projects": list(CORE_SIGNAL_PROJECTS),
+        },
         "next_actions": [
             "Set project Supabase URL and service role variables in Render for Circa Haus and Exclusivity.",
             "Apply supabase/ether_signal_support.sql inside each connected Supabase project.",
             "Set per-project Ether signal secrets before requiring proof mode.",
             "Run POST /operations/suite/smoke for a bundled readiness + signal + audit smoke test.",
+            "Run POST /operations/cron/signal when cron env and Supabase support are ready.",
             "Confirm rows appear in each project's ether_signals table.",
         ],
         "projects": rows,
+    }
+
+
+@router.get("/cron/status")
+async def cron_status():
+    rows, summary = _project_status_rows()
+    ready_projects = [row["slug"] for row in rows if row["slug"] in CORE_SIGNAL_PROJECTS and row["signal_readiness"].get("ready_for_real_signal")]
+    missing_projects = [slug for slug in CORE_SIGNAL_PROJECTS if slug not in ready_projects]
+    return {
+        "ok": True,
+        "cron_ready": summary["core_ready_for_cron"],
+        "expected_projects": list(CORE_SIGNAL_PROJECTS),
+        "ready_projects": ready_projects,
+        "missing_projects": missing_projects,
+        "summary": summary,
+        "routes": {
+            "cron_signal": "/operations/cron/signal",
+            "suite_smoke": "/operations/suite/smoke",
+            "suite_status": "/operations/suite/status",
+            "audit_summary": "/operations/audit/summary",
+        },
+        "operator_notes": [
+            "Cron should only be considered ready when Circa Haus and Exclusivity are ready for real signal writes.",
+            "If missing_projects is not empty, wire project Supabase env vars and apply the Supabase signal SQL first.",
+            "The cron signal route is internal-only and should be called with Ether's internal token.",
+        ],
+    }
+
+
+@router.post("/cron/signal")
+async def cron_signal(body: CronSignalRequest, request: Request):
+    meta = extract_request_meta(request)
+    signal_body = MultiProjectSignalOperationRequest(
+        project_slugs=body.project_slugs,
+        include_unconfigured=body.include_unconfigured,
+        signal_kind=body.signal_kind,
+        status=body.status,
+        instance_id="render-cron-or-admin-cron",
+        meta={
+            "cron_signal": True,
+            "requested_by": meta.source,
+            **body.meta,
+        },
+    )
+    result = _trigger_many(signal_body, meta.source or "cron")
+    audit_event(
+        action="operations.cron_signal",
+        actor=meta.source or "cron",
+        result="ok" if result.get("ok") else "partial-or-failed",
+        details={
+            "ok_count": result.get("ok_count"),
+            "total": result.get("total"),
+            "projects": body.project_slugs,
+        },
+    )
+    return {
+        "ok": bool(result.get("ok")),
+        "cron_ready_after_run": bool(result.get("ok")),
+        "signal": result,
+        "audit": audit_snapshot(limit=12),
+        "operator_notes": [
+            "If ok is true, confirm rows in every connected project's ether_signals table.",
+            "If ok is false, check readiness, Render env vars, Supabase SQL, and service-role permissions.",
+        ],
     }
 
 
@@ -130,6 +217,8 @@ async def signal_readiness_index():
         "routes": {
             "suite_status": "/operations/suite/status",
             "suite_smoke_test": "/operations/suite/smoke",
+            "cron_status": "/operations/cron/status",
+            "cron_signal": "/operations/cron/signal",
             "audit_recent": "/operations/audit/recent",
             "audit_summary": "/operations/audit/summary",
             "all_project_readiness": "/readiness",
