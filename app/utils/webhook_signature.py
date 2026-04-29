@@ -51,6 +51,55 @@ def _headers_get(headers: Dict[str, str], key: str) -> Optional[str]:
     return None
 
 
+def provider_signature_requirements(project_slug: str, provider: str) -> Dict[str, Any]:
+    normalized = provider.strip().lower()
+    prefix = _project_prefix(project_slug)
+    if normalized == "stripe":
+        keys = [f"{prefix}_STRIPE_WEBHOOK_SECRET", "STRIPE_WEBHOOK_SECRET"]
+        header = "stripe-signature"
+        mode = "stripe_v1_hmac_sha256"
+    elif normalized == "twilio":
+        keys = [f"{prefix}_TWILIO_AUTH_TOKEN", "TWILIO_AUTH_TOKEN"]
+        header = "x-twilio-signature"
+        mode = "twilio_hmac_sha1_url_params"
+    elif normalized == "canva":
+        keys = [f"{prefix}_CANVA_WEBHOOK_SECRET", f"{prefix}_CANVA_CLIENT_SECRET"]
+        header = "x-canva-signature"
+        mode = "generic_hmac_sha256_raw_body"
+    elif normalized == "apliiq":
+        keys = [f"{prefix}_APLIIQ_WEBHOOK_SECRET", f"{prefix}_APLIIQ_API_SECRET"]
+        header = "x-apliiq-signature"
+        mode = "generic_hmac_sha256_raw_body"
+    elif normalized == "printful":
+        keys = [f"{prefix}_PRINTFUL_WEBHOOK_SECRET"]
+        header = "x-pf-signature"
+        mode = "generic_hmac_sha256_raw_body"
+    else:
+        keys = []
+        header = None
+        mode = "unsupported_provider"
+    return {
+        "provider": normalized,
+        "configured": bool(_env(*keys)) if keys else False,
+        "env_keys": keys,
+        "expected_header": header,
+        "mode": mode,
+        "supported": bool(keys),
+    }
+
+
+def signature_readiness_for_project(project_slug: str, providers: list[str]) -> Dict[str, Any]:
+    rows = [provider_signature_requirements(project_slug, provider) for provider in sorted(set(providers))]
+    supported = [row for row in rows if row.get("supported")]
+    unconfigured = [row["provider"] for row in supported if not row.get("configured")]
+    return {
+        "project_slug": project_slug.strip().lower(),
+        "signature_ready": not unconfigured,
+        "unconfigured_supported_providers": unconfigured,
+        "providers": rows,
+    }
+
+
 def verify_webhook_signature(
     *,
     project_slug: str,
