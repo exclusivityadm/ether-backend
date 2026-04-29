@@ -25,6 +25,7 @@ class ThreatEventResponse(BaseModel):
     risk_score: int
     disposition: str
     quarantined: bool
+    threat_id: Optional[int] = None
 
 
 class QuarantineRequest(BaseModel):
@@ -43,11 +44,23 @@ class QuarantineResponse(BaseModel):
     target_id: str
     status: str
     reason: str
+    quarantine_id: Optional[int] = None
+
+
+class QuarantineReleaseRequest(BaseModel):
+    quarantine_id: int
+    reason: str
 
 
 class ThreatReviewRequest(BaseModel):
     project_slug: Optional[str] = None
     recent_limit: int = 10
+
+
+class ThreatManualReviewRequest(BaseModel):
+    threat_id: int
+    status: str = "reviewed"
+    review_notes: Optional[str] = None
 
 
 class ThreatReviewResponse(BaseModel):
@@ -57,3 +70,11 @@ class ThreatReviewResponse(BaseModel):
     summary: str
     recommended_actions: List[str] = Field(default_factory=list)
     counts: Dict[str, int] = Field(default_factory=dict)
+
+
+class SentinelStatusResponse(BaseModel):
+    ok: bool = True
+    project_slug: Optional[str] = None
+    snapshot: Dict[str, Any] = Field(default_factory=dict)
+    launch_blocking: bool = False
+    launch_blockers: List[str] = Field(default_factory=list)
