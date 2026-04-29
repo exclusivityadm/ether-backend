@@ -25,6 +25,7 @@ from app.utils.audit import initialize_audit
 from app.utils.control_plane import control_plane_state
 from app.utils.sentinel import sentinel_engine
 from app.utils.settings import settings
+from app.utils.signal_verification_store import init_signal_verification_store
 from app.utils.webhook_store import init_webhook_store
 
 log = logging.getLogger("ether_v2.main")
@@ -32,7 +33,7 @@ log = logging.getLogger("ether_v2.main")
 app = FastAPI(
     title="Ether Backend v2",
     version=settings.ETHER_VERSION,
-    description="Sealed internal-only Ether API (contracts + ingest + observability + control plane foundation + sentinel incident operations + provider webhook operations + signal lane foundation + readiness checks + operations)",
+    description="Sealed internal-only Ether API (contracts + ingest + observability + control plane foundation + sentinel incident operations + provider webhook operations + verified signal/keepalive + readiness checks + operations)",
 )
 
 install_error_handlers(app)
@@ -88,6 +89,8 @@ async def root():
             "/operations/cron/signal",
             "/operations/audit/recent",
             "/operations/audit/summary",
+            "/operations/signal/health",
+            "/operations/signal/history",
             "/operations/signal/readiness",
             "/operations/signal/all",
             "/operations/signal/{project_slug}",
@@ -125,4 +128,5 @@ async def startup_event():
     control_plane_state.initialize()
     sentinel_engine.initialize()
     init_webhook_store()
-    log.info("Ether v2 starting — persistent audit, persistent controls, Sentinel incident operations, provider webhook operations, signal lanes, readiness, and operations loaded")
+    init_signal_verification_store()
+    log.info("Ether v2 starting — persistent audit, persistent controls, Sentinel incident operations, provider webhook operations, verified signals, readiness, and operations loaded")
