@@ -33,7 +33,7 @@ log = logging.getLogger("ether_v2.main")
 app = FastAPI(
     title="Ether Backend v2",
     version=settings.ETHER_VERSION,
-    description="Sealed internal-only Ether API (contracts + ingest + observability + admin control plane + sentinel incident operations + provider webhook operations + verified signal/keepalive + readiness checks + operations)",
+    description="Sealed internal-only Ether API (contracts + ingest + observability + admin control plane + sentinel enforcement/recovery + provider webhook operations + verified signal/keepalive + readiness checks + operations)",
 )
 
 install_error_handlers(app)
@@ -113,6 +113,9 @@ async def root():
             "/webhooks/events",
             "/webhooks/{provider}/{project_slug}",
             "/sentinel/status",
+            "/sentinel/enforce",
+            "/sentinel/recovery/{project_slug}",
+            "/sentinel/recovery",
             "/sentinel/events",
             "/sentinel/review",
             "/sentinel/review/manual",
@@ -135,4 +138,4 @@ async def startup_event():
     sentinel_engine.initialize()
     init_webhook_store()
     init_signal_verification_store()
-    log.info("Ether v2 starting — persistent audit, admin controls, Sentinel incident operations, provider webhook operations, verified signals, readiness, and operations loaded")
+    log.info("Ether v2 starting — persistent audit, admin controls, Sentinel enforcement/recovery, provider webhook operations, verified signals, readiness, and operations loaded")
