@@ -59,3 +59,4 @@ class SignalHeartbeatResponse(BaseModel):
     next_heartbeat_seconds: int
     control_state: Dict[str, bool]
     provider_controls: Dict[str, bool]
+    project_signal: Dict[str, Any] = Field(default_factory=dict)
