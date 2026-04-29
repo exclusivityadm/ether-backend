@@ -11,7 +11,7 @@ from app.schemas.signal import (
 )
 from app.utils.audit import audit_event
 from app.utils.control_plane import control_plane_state
-from app.utils.project_supabase_signal import build_signal_payload, record_project_signal
+from app.utils.project_supabase_signal import build_signal_payload, record_and_verify_project_signal
 from app.utils.projects import resolve_project
 from app.utils.request_meta import extract_request_meta
 from app.utils.signal_lane import signal_lane_registry
@@ -145,10 +145,10 @@ async def signal_heartbeat(request: Request, body: SignalHeartbeatRequest):
         )
 
     project_signal = {
-        "attempted": False,
-        "configured": False,
         "ok": False,
+        "project_slug": project.slug,
         "mode": "not_attempted",
+        "error": None,
     }
 
     if result.accepted:
@@ -163,13 +163,13 @@ async def signal_heartbeat(request: Request, body: SignalHeartbeatRequest):
             verified=result.verified,
             meta=body.meta,
         )
-        project_signal = record_project_signal(project_slug=project.slug, payload=payload).to_dict()
+        project_signal = record_and_verify_project_signal(project_slug=project.slug, payload=payload).to_dict()
 
     audit_event(
         action="signal.heartbeat",
         project_slug=project.slug,
         actor=meta.source,
-        result="accepted" if result.accepted else "awaiting-proof",
+        result="verified" if project_signal.get("ok") else "awaiting-proof" if not result.accepted else "failed",
         details={
             "lane_id": body.lane_id,
             "verification_mode": result.verification_mode,
