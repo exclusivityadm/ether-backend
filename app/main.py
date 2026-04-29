@@ -13,6 +13,7 @@ from app.routers.version import router as version_router
 from app.routers.ether_ingest import router as ether_ingest_router
 from app.routers.db_status import router as db_status_router
 from app.routers.db_test import router as db_test_router
+from app.routers.operations import router as operations_router
 from app.routers.projects import router as projects_router
 from app.routers.providers import router as providers_router
 from app.routers.readiness import router as readiness_router
@@ -27,7 +28,7 @@ log = logging.getLogger("ether_v2.main")
 app = FastAPI(
     title="Ether Backend v2",
     version=settings.ETHER_VERSION,
-    description="Sealed internal-only Ether API (contracts + ingest + observability + control plane foundation + sentinel scaffold + signal lane foundation + readiness checks)",
+    description="Sealed internal-only Ether API (contracts + ingest + observability + control plane foundation + sentinel scaffold + signal lane foundation + readiness checks + operations)",
 )
 
 install_error_handlers(app)
@@ -55,6 +56,7 @@ app.include_router(db_status_router)
 app.include_router(db_test_router)
 app.include_router(projects_router)
 app.include_router(readiness_router)
+app.include_router(operations_router)
 app.include_router(auth_router)
 app.include_router(controls_router)
 app.include_router(providers_router)
@@ -76,6 +78,8 @@ async def root():
             "/projects/bootstrap",
             "/readiness",
             "/readiness/{project_slug}",
+            "/operations/signal/readiness",
+            "/operations/signal/{project_slug}",
             "/auth/verify",
             "/controls",
             "/controls/project/disable",
@@ -99,4 +103,4 @@ async def root():
 
 @app.on_event("startup")
 async def startup_event():
-    log.info("Ether v2 starting — control-plane foundation, sentinel scaffold, signal lane foundation, and readiness checks loaded")
+    log.info("Ether v2 starting — control-plane foundation, sentinel scaffold, signal lane foundation, readiness checks, and operations loaded")
