@@ -52,6 +52,36 @@ class QuarantineReleaseRequest(BaseModel):
     reason: str
 
 
+class EnforcementCheckRequest(BaseModel):
+    project_slug: str
+    action: str
+    actor_id: Optional[str] = None
+    target_type: Optional[str] = None
+    target_id: Optional[str] = None
+    details: Dict[str, Any] = Field(default_factory=dict)
+
+
+class EnforcementCheckResponse(BaseModel):
+    ok: bool = True
+    project_slug: str
+    action: str
+    allowed: bool
+    disposition: str
+    risk_score: int
+    reasons: List[str] = Field(default_factory=list)
+    active_quarantines: List[Dict[str, Any]] = Field(default_factory=list)
+    recommended_actions: List[str] = Field(default_factory=list)
+
+
+class SentinelRecoveryRequest(BaseModel):
+    project_slug: str
+    release_quarantine_ids: List[int] = Field(default_factory=list)
+    review_threat_ids: List[int] = Field(default_factory=list)
+    review_status: str = "resolved"
+    reason: str
+    details: Dict[str, Any] = Field(default_factory=dict)
+
+
 class ThreatReviewRequest(BaseModel):
     project_slug: Optional[str] = None
     recent_limit: int = 10
