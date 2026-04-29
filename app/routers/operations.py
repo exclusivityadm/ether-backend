@@ -6,10 +6,11 @@ from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
 
 from app.utils.audit import audit_event, audit_snapshot, list_recent_audit_events
-from app.utils.project_supabase_signal import build_signal_payload, project_signal_readiness, record_project_signal
+from app.utils.project_supabase_signal import build_signal_payload, project_signal_readiness, record_and_verify_project_signal
 from app.utils.projects import get_project, list_projects
 from app.utils.request_meta import extract_request_meta
 from app.utils.signal_lane import signal_lane_registry
+from app.utils.signal_verification_store import list_signal_runs, signal_verification_snapshot
 
 router = APIRouter(prefix="/operations", tags=["operations"])
 
@@ -55,6 +56,10 @@ def _project_status_rows() -> tuple[list[dict[str, Any]], dict[str, Any]]:
     active_lane_count = 0
     core_ready_count = 0
 
+    verification = signal_verification_snapshot()
+    last_success = verification.get("last_success_by_project", {})
+    last_failure = verification.get("last_failure_by_project", {})
+
     for project in projects:
         readiness = project_signal_readiness(project.slug).to_dict()
         lanes = signal_lane_registry.list_lanes(project_slug=project.slug, limit=10)
@@ -78,6 +83,10 @@ def _project_status_rows() -> tuple[list[dict[str, Any]], dict[str, Any]]:
                 "enabled_providers": enabled_providers,
                 "feature_flags": project.feature_flags,
                 "signal_readiness": readiness,
+                "signal_verification": {
+                    "last_success": last_success.get(project.slug),
+                    "last_failure": last_failure.get(project.slug),
+                },
                 "recent_lanes": lanes,
                 "recent_lane_count": len(lanes),
             }
@@ -91,6 +100,7 @@ def _project_status_rows() -> tuple[list[dict[str, Any]], dict[str, Any]]:
         "core_projects_expected": list(CORE_SIGNAL_PROJECTS),
         "core_ready_for_real_signal_count": core_ready_count,
         "core_ready_for_cron": core_ready_count == len(CORE_SIGNAL_PROJECTS),
+        "core_last_verified_count": sum(1 for slug in CORE_SIGNAL_PROJECTS if last_success.get(slug)),
     }
     return rows, summary
 
@@ -103,6 +113,7 @@ async def suite_operations_status():
         "ok": True,
         "suite_ready_for_core_signal": suite_ready,
         "summary": summary,
+        "signal_verification": signal_verification_snapshot(),
         "audit": audit_snapshot(limit=12),
         "cron": {
             "ready": suite_ready,
@@ -116,7 +127,7 @@ async def suite_operations_status():
             "Set per-project Ether signal secrets before requiring proof mode.",
             "Run POST /operations/suite/smoke for a bundled readiness + signal + audit smoke test.",
             "Run POST /operations/cron/signal when cron env and Supabase support are ready.",
-            "Confirm rows appear in each project's ether_signals table.",
+            "Confirm verified signal runs appear in /operations/signal/history.",
         ],
         "projects": rows,
     }
@@ -125,25 +136,36 @@ async def suite_operations_status():
 @router.get("/cron/status")
 async def cron_status():
     rows, summary = _project_status_rows()
+    verification = signal_verification_snapshot()
+    last_success = verification.get("last_success_by_project", {})
     ready_projects = [row["slug"] for row in rows if row["slug"] in CORE_SIGNAL_PROJECTS and row["signal_readiness"].get("ready_for_real_signal")]
+    verified_projects = [slug for slug in CORE_SIGNAL_PROJECTS if last_success.get(slug)]
     missing_projects = [slug for slug in CORE_SIGNAL_PROJECTS if slug not in ready_projects]
+    unverified_projects = [slug for slug in CORE_SIGNAL_PROJECTS if slug not in verified_projects]
     return {
         "ok": True,
         "cron_ready": summary["core_ready_for_cron"],
+        "cron_verified": summary["core_last_verified_count"] == len(CORE_SIGNAL_PROJECTS),
         "expected_projects": list(CORE_SIGNAL_PROJECTS),
         "ready_projects": ready_projects,
+        "verified_projects": verified_projects,
         "missing_projects": missing_projects,
+        "unverified_projects": unverified_projects,
         "summary": summary,
+        "signal_verification": verification,
         "routes": {
             "cron_signal": "/operations/cron/signal",
             "suite_smoke": "/operations/suite/smoke",
             "suite_status": "/operations/suite/status",
+            "signal_history": "/operations/signal/history",
+            "signal_health": "/operations/signal/health",
             "audit_summary": "/operations/audit/summary",
         },
         "operator_notes": [
-            "Cron should only be considered ready when Circa Haus and Exclusivity are ready for real signal writes.",
+            "Cron should only be considered ready when Circa Haus and Exclusivity are configured for real signal writes.",
+            "Cron should only be considered verified when both projects have a successful write + readback signal run.",
             "If missing_projects is not empty, wire project Supabase env vars and apply the Supabase signal SQL first.",
-            "The cron signal route is internal-only and should be called with Ether's internal token.",
+            "If unverified_projects is not empty after wiring, run /operations/cron/signal and inspect failure reasons.",
         ],
     }
 
@@ -178,10 +200,11 @@ async def cron_signal(body: CronSignalRequest, request: Request):
         "ok": bool(result.get("ok")),
         "cron_ready_after_run": bool(result.get("ok")),
         "signal": result,
+        "signal_verification": signal_verification_snapshot(),
         "audit": audit_snapshot(limit=12),
         "operator_notes": [
-            "If ok is true, confirm rows in every connected project's ether_signals table.",
-            "If ok is false, check readiness, Render env vars, Supabase SQL, and service-role permissions.",
+            "If ok is true, write + readback verification succeeded for every requested project.",
+            "If ok is false, check readiness, Render env vars, Supabase SQL, service-role permissions, and readback failure reasons.",
         ],
     }
 
@@ -198,7 +221,7 @@ async def recent_audit_events(
         "ok": True,
         "count": len(events),
         "events": events,
-        "note": "Recent in-memory audit events only. Use runtime/provider logs for durable production audit until persistent audit storage is added.",
+        "note": "Persistent audit events are used when available, with in-memory fallback.",
     }
 
 
@@ -207,6 +230,40 @@ async def audit_summary(limit: int = 50):
     return {
         "ok": True,
         "audit": audit_snapshot(limit=limit),
+    }
+
+
+@router.get("/signal/health")
+async def signal_health(project_slug: Optional[str] = None):
+    snapshot = signal_verification_snapshot(project_slug=project_slug)
+    last_success = snapshot.get("last_success_by_project", {})
+    last_failure = snapshot.get("last_failure_by_project", {})
+    launch_blockers: list[str] = []
+    if project_slug:
+        slug = project_slug.strip().lower()
+        if not last_success.get(slug):
+            launch_blockers.append(f"No verified signal run exists for {slug}.")
+        if last_failure.get(slug) and not last_success.get(slug):
+            launch_blockers.append(f"Latest available signal state for {slug} includes failure: {last_failure[slug].get('error')}")
+    else:
+        for slug in CORE_SIGNAL_PROJECTS:
+            if not last_success.get(slug):
+                launch_blockers.append(f"No verified signal run exists for core project {slug}.")
+    return {
+        "ok": True,
+        "launch_blocking": bool(launch_blockers),
+        "launch_blockers": launch_blockers,
+        "snapshot": snapshot,
+    }
+
+
+@router.get("/signal/history")
+async def signal_history(project_slug: Optional[str] = None, verified_ok: Optional[bool] = None, limit: int = 50):
+    runs = list_signal_runs(project_slug=project_slug, verified_ok=verified_ok, limit=limit)
+    return {
+        "ok": True,
+        "count": len(runs),
+        "runs": runs,
     }
 
 
@@ -219,6 +276,8 @@ async def signal_readiness_index():
             "suite_smoke_test": "/operations/suite/smoke",
             "cron_status": "/operations/cron/status",
             "cron_signal": "/operations/cron/signal",
+            "signal_health": "/operations/signal/health",
+            "signal_history": "/operations/signal/history",
             "audit_recent": "/operations/audit/recent",
             "audit_summary": "/operations/audit/summary",
             "all_project_readiness": "/readiness",
@@ -226,7 +285,7 @@ async def signal_readiness_index():
             "manual_project_signal": "/operations/signal/{project_slug}",
             "manual_multi_project_signal": "/operations/signal/all",
         },
-        "intended_use": "Internal-only readiness, audit visibility, manual signal operations, Render Cron, admin smoke tests, and wiring-day verification.",
+        "intended_use": "Internal-only readiness, verified signal history, audit visibility, manual signal operations, Render Cron, admin smoke tests, and wiring-day verification.",
     }
 
 
@@ -268,12 +327,12 @@ def _trigger_for_project(project_slug: str, body: ProjectSignalOperationRequest,
     )
     payload["signal_kind"] = body.signal_kind.strip() or "manual"
 
-    result = record_project_signal(project_slug=project.slug, payload=payload).to_dict()
+    result = record_and_verify_project_signal(project_slug=project.slug, payload=payload).to_dict()
     audit_event(
         action="operations.project_signal",
         project_slug=project.slug,
         actor=actor,
-        result="ok" if result.get("ok") else "failed",
+        result="verified" if result.get("ok") else "failed",
         details={
             "readiness": readiness,
             "project_signal": result,
@@ -321,7 +380,7 @@ def _trigger_many(body: MultiProjectSignalOperationRequest, actor: Optional[str]
     audit_event(
         action="operations.project_signal_all",
         actor=actor,
-        result="ok" if ok_count == len(results) and results else "partial-or-failed",
+        result="verified" if ok_count == len(results) and results else "partial-or-failed",
         details={
             "requested": requested,
             "ok_count": ok_count,
@@ -357,7 +416,7 @@ async def suite_smoke_test(body: SuiteSmokeTestRequest, request: Request):
     audit_event(
         action="operations.suite_smoke_test",
         actor=meta.source,
-        result="ok" if ok else "partial-or-failed",
+        result="verified" if ok else "partial-or-failed",
         details={
             "signal_ok": ok,
             "ok_count": signal_result.get("ok_count"),
@@ -371,11 +430,12 @@ async def suite_smoke_test(body: SuiteSmokeTestRequest, request: Request):
         "before": {"summary": before_summary, "projects": before_rows},
         "signal": signal_result,
         "after": {"summary": after_summary, "projects": after_rows},
+        "signal_verification": signal_verification_snapshot(),
         "audit": audit,
         "operator_notes": [
             "If signal.ok is false because projects are not configured, wire Render env vars and apply Supabase SQL first.",
-            "If signal writes succeed, confirm rows in each project ether_signals table.",
-            "If a project is missing, verify the project registry and slug spelling.",
+            "If signal writes fail, inspect write_result in /operations/signal/history.",
+            "If readback fails, inspect Supabase table/RPC permissions and ether_signals rows.",
         ],
     }
 
