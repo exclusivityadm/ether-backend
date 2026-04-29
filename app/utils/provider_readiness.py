@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import os
 from dataclasses import asdict, dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from app.utils.control_plane import control_plane_state
 from app.utils.project_supabase_signal import project_signal_readiness
 from app.utils.projects import get_project, list_projects
+from app.utils.webhook_signature import signature_readiness_for_project
 
 
 @dataclass(frozen=True)
@@ -15,6 +16,8 @@ class ProviderReadinessResult:
     enabled: bool
     disabled_by_control_plane: bool
     configured: bool
+    signature_configured: bool
+    signature_required_for_launch: bool
     required_for_launch: bool
     launch_blocking: bool
     notes: List[str]
@@ -39,19 +42,31 @@ EXCLUSIVITY_LAUNCH_REQUIRED = {
     "supabase",
 }
 
+# Webhook signature verification is required for providers whose incoming events
+# can affect money movement, user messaging, design publishing, or fulfillment.
+CIRCA_HAUS_SIGNATURE_REQUIRED = {
+    "stripe",
+    "twilio",
+    "canva",
+    "apliiq",
+    "printful",
+}
+
+EXCLUSIVITY_SIGNATURE_REQUIRED = set()
+
 PROVIDER_ENV_REQUIREMENTS: Dict[str, Dict[str, List[str]]] = {
     "circa_haus": {
         "supabase": ["CIRCA_HAUS_SUPABASE_URL", "CIRCA_HAUS_SUPABASE_SERVICE_ROLE_KEY"],
         "stripe": ["CIRCA_HAUS_STRIPE_SECRET_KEY", "CIRCA_HAUS_STRIPE_WEBHOOK_SECRET"],
         "openai": ["CIRCA_HAUS_OPENAI_API_KEY"],
         "elevenlabs": ["CIRCA_HAUS_ELEVENLABS_API_KEY", "CIRCA_HAUS_ELEVENLABS_TALETHIA_VOICE_ID"],
-        "canva": ["CIRCA_HAUS_CANVA_CLIENT_ID", "CIRCA_HAUS_CANVA_CLIENT_SECRET"],
-        "apliiq": ["CIRCA_HAUS_APLIIQ_API_KEY"],
-        "printful": ["CIRCA_HAUS_PRINTFUL_API_TOKEN"],
+        "canva": ["CIRCA_HAUS_CANVA_CLIENT_ID", "CIRCA_HAUS_CANVA_CLIENT_SECRET", "CIRCA_HAUS_CANVA_WEBHOOK_SECRET"],
+        "apliiq": ["CIRCA_HAUS_APLIIQ_API_KEY", "CIRCA_HAUS_APLIIQ_WEBHOOK_SECRET"],
+        "printful": ["CIRCA_HAUS_PRINTFUL_API_TOKEN", "CIRCA_HAUS_PRINTFUL_WEBHOOK_SECRET"],
         "cloudflare": ["CIRCA_HAUS_CLOUDFLARE_ZONE_ID"],
         "google_workspace": ["CIRCA_HAUS_SUPPORT_EMAIL", "CIRCA_HAUS_ADMIN_EMAIL"],
         "amazon_ses": ["CIRCA_HAUS_SES_FROM_EMAIL"],
-        "twilio": ["CIRCA_HAUS_TWILIO_ACCOUNT_SID", "CIRCA_HAUS_TWILIO_MESSAGING_SERVICE_SID"],
+        "twilio": ["CIRCA_HAUS_TWILIO_ACCOUNT_SID", "CIRCA_HAUS_TWILIO_MESSAGING_SERVICE_SID", "CIRCA_HAUS_TWILIO_AUTH_TOKEN"],
     },
     "exclusivity": {
         "supabase": ["EXCLUSIVITY_SUPABASE_URL", "EXCLUSIVITY_SUPABASE_SERVICE_ROLE_KEY"],
@@ -76,6 +91,15 @@ def _required_set(project_slug: str) -> set[str]:
     return {"supabase"}
 
 
+def _signature_required_set(project_slug: str) -> set[str]:
+    slug = project_slug.strip().lower()
+    if slug == "circa_haus":
+        return set(CIRCA_HAUS_SIGNATURE_REQUIRED)
+    if slug == "exclusivity":
+        return set(EXCLUSIVITY_SIGNATURE_REQUIRED)
+    return set()
+
+
 def provider_readiness_for_project(project_slug: str) -> Dict[str, Any]:
     project = get_project(project_slug)
     if project is None:
@@ -89,6 +113,11 @@ def provider_readiness_for_project(project_slug: str) -> Dict[str, Any]:
         }
 
     required = _required_set(project.slug)
+    signature_required = _signature_required_set(project.slug)
+    signature_readiness = signature_readiness_for_project(project.slug, list(project.provider_set.keys()))
+    signature_by_provider = {
+        row.get("provider"): row for row in signature_readiness.get("providers", [])
+    }
     provider_rows: List[Dict[str, Any]] = []
     launch_blockers: List[str] = []
     env_requirements = PROVIDER_ENV_REQUIREMENTS.get(project.slug, {})
@@ -97,6 +126,8 @@ def provider_readiness_for_project(project_slug: str) -> Dict[str, Any]:
         normalized = provider.strip().lower()
         disabled = control_plane_state.provider_disabled(project.slug, normalized)
         required_for_launch = normalized in required
+        signature_required_for_launch = normalized in signature_required
+        signature_configured = bool(signature_by_provider.get(normalized, {}).get("configured"))
         needed = env_requirements.get(normalized, [])
         configured = True
         notes: List[str] = []
@@ -116,12 +147,27 @@ def provider_readiness_for_project(project_slug: str) -> Dict[str, Any]:
             configured = bool(enabled)
             notes.append("No explicit environment requirements are registered for this provider yet.")
 
+        signature_row = signature_by_provider.get(normalized)
+        if signature_row and signature_row.get("supported"):
+            if signature_configured:
+                notes.append("Provider webhook signature verification secret is configured.")
+            else:
+                notes.append("Provider webhook signature verification secret is not configured.")
+        if signature_required_for_launch and not signature_configured:
+            notes.append("Provider webhook signature verification is required before live launch trust.")
+
         if disabled:
             notes.append("Provider is disabled by Ether control plane.")
         if not enabled:
             notes.append("Provider is not enabled for this project registry.")
 
-        launch_blocking = bool(enabled and required_for_launch and (disabled or not configured))
+        launch_blocking = bool(
+            enabled
+            and (
+                (required_for_launch and (disabled or not configured))
+                or (signature_required_for_launch and not signature_configured)
+            )
+        )
         if launch_blocking:
             launch_blockers.append(normalized)
 
@@ -131,6 +177,8 @@ def provider_readiness_for_project(project_slug: str) -> Dict[str, Any]:
                 enabled=bool(enabled),
                 disabled_by_control_plane=disabled,
                 configured=configured,
+                signature_configured=signature_configured,
+                signature_required_for_launch=signature_required_for_launch,
                 required_for_launch=required_for_launch,
                 launch_blocking=launch_blocking,
                 notes=notes,
@@ -149,6 +197,8 @@ def provider_readiness_for_project(project_slug: str) -> Dict[str, Any]:
         "launch_ready": not launch_blockers,
         "launch_blockers": launch_blockers,
         "required_providers": sorted(required),
+        "signature_required_providers": sorted(signature_required),
+        "signature_readiness": signature_readiness,
         "providers": provider_rows,
     }
 
