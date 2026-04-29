@@ -22,6 +22,7 @@ from app.routers.signal import router as signal_router
 from app.routers.webhooks import router as webhooks_router
 
 from app.utils.audit import initialize_audit
+from app.utils.control_plane import control_plane_state
 from app.utils.settings import settings
 
 log = logging.getLogger("ether_v2.main")
@@ -95,6 +96,8 @@ async def root():
             "/controls/provider/disable",
             "/controls/provider/enable",
             "/providers/{project_slug}",
+            "/providers/{project_slug}/readiness",
+            "/providers/readiness/suite",
             "/webhooks/{provider}/{project_slug}",
             "/sentinel/events",
             "/sentinel/review",
@@ -112,4 +115,5 @@ async def root():
 @app.on_event("startup")
 async def startup_event():
     initialize_audit()
-    log.info("Ether v2 starting — control-plane foundation, sentinel scaffold, signal lane foundation, readiness checks, operations, and persistent audit loaded")
+    control_plane_state.initialize()
+    log.info("Ether v2 starting — control-plane foundation, sentinel scaffold, signal lane foundation, readiness checks, operations, persistent audit, and persistent controls loaded")
