@@ -12,6 +12,7 @@ from app.utils.control_plane import control_plane_state
 from app.utils.projects import get_project, list_projects
 from app.utils.provider_broker import provider_enabled
 from app.utils.request_meta import extract_request_meta
+from app.utils.webhook_signature import verify_webhook_signature
 from app.utils.webhook_store import (
     canonical_payload_hash,
     event_exists,
@@ -49,7 +50,9 @@ def _extract_provider_event_id(provider: str, payload: Dict[str, Any], request: 
         value = payload.get("id") or payload.get("event_id") or payload.get("order_id")
         return str(value).strip() if value else None
     if normalized == "printful":
-        value = payload.get("id") or payload.get("event_id") or payload.get("data", {}).get("id") if isinstance(payload.get("data"), dict) else None
+        value = payload.get("id") or payload.get("event_id")
+        if not value and isinstance(payload.get("data"), dict):
+            value = payload.get("data", {}).get("id")
         return str(value).strip() if value else None
 
     value = payload.get("id") or payload.get("event_id") or payload.get("eventId")
@@ -69,46 +72,48 @@ def _extract_event_type(provider: str, payload: Dict[str, Any]) -> Optional[str]
     return str(value).strip() if value else None
 
 
-def _signature_presence(provider: str, request: Request) -> Dict[str, Any]:
-    normalized = _normalized_provider(provider)
-    headers = request.headers
-    if normalized == "stripe":
-        return {"signature_header_present": bool(headers.get("stripe-signature")), "expected_header": "stripe-signature"}
-    if normalized == "twilio":
-        return {"signature_header_present": bool(headers.get("x-twilio-signature")), "expected_header": "x-twilio-signature"}
-    if normalized == "canva":
-        return {"signature_header_present": bool(headers.get("x-canva-signature") or headers.get("canva-signature")), "expected_header": "x-canva-signature"}
-    if normalized == "apliiq":
-        return {"signature_header_present": bool(headers.get("x-apliiq-signature") or headers.get("apliiq-signature")), "expected_header": "x-apliiq-signature"}
-    if normalized == "printful":
-        return {"signature_header_present": bool(headers.get("x-pf-signature") or headers.get("x-printful-signature")), "expected_header": "x-pf-signature"}
-    return {"signature_header_present": False, "expected_header": None}
-
-
-def _safe_headers(provider: str, request: Request) -> Dict[str, Any]:
-    signature = _signature_presence(provider, request)
+def _safe_headers(provider: str, request: Request, signature: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "host": request.headers.get("host"),
         "user_agent": request.headers.get("user-agent"),
         "content_type": request.headers.get("content-type"),
-        "signature_header_present": signature.get("signature_header_present"),
+        "signature_header_present": signature.get("header_present"),
         "expected_signature_header": signature.get("expected_header"),
+        "signature_mode": signature.get("mode"),
     }
 
 
-def _validation_result(provider: str, payload: Dict[str, Any], request: Request) -> Dict[str, Any]:
+def _validation_result(
+    *,
+    project_slug: str,
+    provider: str,
+    payload: Dict[str, Any],
+    request: Request,
+    raw_body: bytes,
+) -> Dict[str, Any]:
     normalized = _normalized_provider(provider)
     provider_event_id = _extract_provider_event_id(normalized, payload, request)
     event_type = _extract_event_type(normalized, payload)
-    signature = _signature_presence(normalized, request)
+    signature = verify_webhook_signature(
+        project_slug=project_slug,
+        provider=normalized,
+        headers=dict(request.headers),
+        raw_body=raw_body,
+        payload=payload,
+        request_url=str(request.url),
+    ).to_dict()
     warnings: list[str] = []
 
     if not provider_event_id:
         warnings.append("Provider event id was not found; payload hash will be used for idempotency.")
     if not event_type:
         warnings.append("Provider event type was not found.")
-    if normalized in {"stripe", "twilio", "canva", "apliiq", "printful"} and not signature.get("signature_header_present"):
-        warnings.append("Expected provider signature header is missing. Signature verification is scaffolded until provider secrets are wired.")
+    warnings.extend(signature.get("warnings") or [])
+
+    if signature.get("configured") and not signature.get("verified"):
+        warnings.append("Provider signature verification failed; this webhook should not be trusted.")
+    elif not signature.get("configured"):
+        warnings.append("Provider signature verification is not configured yet; event is accepted only as wiring-stage intake.")
 
     return {
         "provider": normalized,
@@ -116,9 +121,15 @@ def _validation_result(provider: str, payload: Dict[str, Any], request: Request)
         "event_type": event_type,
         "signature": signature,
         "warnings": warnings,
-        "signature_verified": False,
-        "verification_mode": "presence-check-only-until-provider-secrets-are-wired",
+        "signature_verified": bool(signature.get("verified")),
+        "signature_configured": bool(signature.get("configured")),
+        "verification_mode": signature.get("mode"),
     }
+
+
+def _signature_should_reject(validation: Dict[str, Any]) -> bool:
+    signature = validation.get("signature") or {}
+    return bool(signature.get("configured") and not signature.get("verified"))
 
 
 def _persist_webhook_attempt(
@@ -147,7 +158,7 @@ def _persist_webhook_attempt(
         duplicate=duplicate,
         payload_hash=payload_hash,
         payload=payload,
-        headers=_safe_headers(provider, request),
+        headers=_safe_headers(provider, request, validation.get("signature") or {}),
         validation=validation,
         received_at=_now(),
         notes=notes,
@@ -196,7 +207,14 @@ async def ingest_webhook(
     meta = extract_request_meta(request)
     normalized_provider = _normalized_provider(provider)
     normalized_project_slug = project_slug.strip().lower()
-    validation = _validation_result(normalized_provider, payload, request)
+    raw_body = await request.body()
+    validation = _validation_result(
+        project_slug=normalized_project_slug,
+        provider=normalized_provider,
+        payload=payload,
+        request=request,
+        raw_body=raw_body,
+    )
     payload_hash = canonical_payload_hash(payload)
     event_uid = make_event_uid(
         project_slug=normalized_project_slug,
@@ -232,13 +250,39 @@ async def ingest_webhook(
             details={"project_slug": normalized_project_slug, "provider": normalized_provider, "webhook_event_id": stored.get("id")},
         )
 
+    if _signature_should_reject(validation):
+        stored = _persist_webhook_attempt(
+            project_slug=project.slug,
+            provider=normalized_provider,
+            request=request,
+            payload=payload,
+            status="signature_invalid",
+            accepted=False,
+            duplicate=False,
+            validation=validation,
+            notes="Provider signature was configured but failed verification.",
+        )
+        audit_event(
+            action="webhook.ingest",
+            project_slug=project.slug,
+            actor=meta.source,
+            provider=normalized_provider,
+            result="signature_invalid",
+            details={"webhook_event_id": stored.get("id"), "event_uid": event_uid, "signature": validation.get("signature")},
+        )
+        return EtherErrorResponse.forbidden(
+            code="ETHER_WEBHOOK_SIGNATURE_INVALID",
+            message="Provider webhook signature failed verification.",
+            details={"project_slug": project.slug, "provider": normalized_provider, "webhook_event_id": stored.get("id")},
+        )
+
     if event_exists(event_uid):
         stored = _persist_webhook_attempt(
             project_slug=project.slug,
             provider=normalized_provider,
             request=request,
             payload=payload,
-            status="duplicate",
+            status="duplicate_verified" if validation.get("signature_verified") else "duplicate",
             accepted=True,
             duplicate=True,
             validation=validation,
@@ -249,13 +293,14 @@ async def ingest_webhook(
             project_slug=project.slug,
             actor=meta.source,
             provider=normalized_provider,
-            result="duplicate",
+            result="duplicate_verified" if validation.get("signature_verified") else "duplicate",
             details={"webhook_event_id": stored.get("id"), "event_uid": event_uid},
         )
         return {
             "ok": True,
             "accepted": True,
             "duplicate": True,
+            "trusted": bool(validation.get("signature_verified")),
             "project_slug": project.slug,
             "provider": normalized_provider,
             "webhook_event_id": stored.get("id"),
@@ -341,7 +386,12 @@ async def ingest_webhook(
         )
 
     configured_route = project.webhook_routes.get(normalized_provider)
-    status = "accepted_with_warnings" if validation.get("warnings") else "accepted"
+    if validation.get("signature_verified"):
+        status = "accepted_verified"
+    elif validation.get("warnings"):
+        status = "accepted_with_warnings"
+    else:
+        status = "accepted"
     stored = _persist_webhook_attempt(
         project_slug=project.slug,
         provider=normalized_provider,
@@ -362,6 +412,7 @@ async def ingest_webhook(
         details={
             "webhook_event_id": stored.get("id"),
             "event_uid": event_uid,
+            "trusted": bool(validation.get("signature_verified")),
             "configured_route": configured_route,
             "event_type": validation.get("event_type"),
             "provider_event_id": validation.get("provider_event_id"),
@@ -373,6 +424,7 @@ async def ingest_webhook(
     return {
         "ok": True,
         "accepted": True,
+        "trusted": bool(validation.get("signature_verified")),
         "duplicate": False,
         "project_slug": project.slug,
         "provider": normalized_provider,
