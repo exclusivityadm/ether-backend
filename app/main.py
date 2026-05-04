@@ -1,4 +1,5 @@
 # app/main.py
+import asyncio
 import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -25,6 +26,7 @@ from app.routers.webhooks import router as webhooks_router
 from app.utils.audit import initialize_audit
 from app.utils.control_plane import control_plane_state
 from app.utils.phantom_core import phantom_core
+from app.utils.phantom_keepalive import phantom_keepalive_lane
 from app.utils.sentinel import sentinel_engine
 from app.utils.settings import settings
 from app.utils.signal_verification_store import init_signal_verification_store
@@ -137,6 +139,9 @@ async def root():
             "/phantom/recovery",
             "/phantom/events",
             "/phantom/invariants",
+            "/phantom/keepalive/status",
+            "/phantom/keepalive/run",
+            "/phantom/keepalive/configure",
             "/db/status",
             "/db/tables",
             "/db/write",
@@ -151,4 +156,5 @@ async def startup_event():
     phantom_core.initialize()
     init_webhook_store()
     init_signal_verification_store()
-    log.info("Ether v2 starting — persistent audit, admin controls, Sentinel, provider webhook operations, verified signals, production gate, readiness, operations, and Phantom Core loaded")
+    asyncio.create_task(phantom_keepalive_lane.start_background_loop())
+    log.info("Ether v2 starting — persistent audit, admin controls, Sentinel, provider webhook operations, verified signals, production gate, readiness, operations, Phantom Core, and Phantom keepalive loaded")
