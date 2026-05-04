@@ -14,6 +14,7 @@ from app.routers.ether_ingest import router as ether_ingest_router
 from app.routers.db_status import router as db_status_router
 from app.routers.db_test import router as db_test_router
 from app.routers.operations import router as operations_router
+from app.routers.phantom_core import router as phantom_core_router
 from app.routers.projects import router as projects_router
 from app.routers.providers import router as providers_router
 from app.routers.readiness import router as readiness_router
@@ -23,6 +24,7 @@ from app.routers.webhooks import router as webhooks_router
 
 from app.utils.audit import initialize_audit
 from app.utils.control_plane import control_plane_state
+from app.utils.phantom_core import phantom_core
 from app.utils.sentinel import sentinel_engine
 from app.utils.settings import settings
 from app.utils.signal_verification_store import init_signal_verification_store
@@ -33,7 +35,7 @@ log = logging.getLogger("ether_v2.main")
 app = FastAPI(
     title="Ether Backend v2",
     version=settings.ETHER_VERSION,
-    description="Sealed internal-only Ether API (contracts + ingest + observability + admin control plane + sentinel enforcement/recovery + provider webhook operations + verified signal/keepalive + production gate + readiness checks + operations)",
+    description="Sealed internal-only Ether API with provider resilience, operations, Sentinel, signal lanes, and always-on Phantom Core sovereignty containment.",
 )
 
 install_error_handlers(app)
@@ -44,7 +46,7 @@ if settings.ETHER_CORS_MODE == "allowlist":
         allow_origins=settings.ETHER_CORS_ALLOW_ORIGINS,
         allow_credentials=False,
         allow_methods=["GET", "POST", "OPTIONS"],
-        allow_headers=["*"],
+        allow_headers=["*"]
     )
 
 app.add_middleware(
@@ -68,6 +70,7 @@ app.include_router(providers_router)
 app.include_router(webhooks_router)
 app.include_router(sentinel_router)
 app.include_router(signal_router)
+app.include_router(phantom_core_router)
 
 @app.get("/")
 async def root():
@@ -127,6 +130,13 @@ async def root():
             "/signal/handshake",
             "/signal/heartbeat",
             "/signal/lanes",
+            "/phantom/status",
+            "/phantom/health",
+            "/phantom/gate",
+            "/phantom/containment",
+            "/phantom/recovery",
+            "/phantom/events",
+            "/phantom/invariants",
             "/db/status",
             "/db/tables",
             "/db/write",
@@ -138,6 +148,7 @@ async def startup_event():
     initialize_audit()
     control_plane_state.initialize()
     sentinel_engine.initialize()
+    phantom_core.initialize()
     init_webhook_store()
     init_signal_verification_store()
-    log.info("Ether v2 starting — persistent audit, admin controls, Sentinel enforcement/recovery, provider webhook operations, verified signals, production gate, readiness, and operations loaded")
+    log.info("Ether v2 starting — persistent audit, admin controls, Sentinel, provider webhook operations, verified signals, production gate, readiness, operations, and Phantom Core loaded")
