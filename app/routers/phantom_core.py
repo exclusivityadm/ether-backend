@@ -4,18 +4,22 @@ from fastapi import APIRouter
 
 from app.schemas.phantom_core import PhantomContainmentRequest, PhantomGateRequest, PhantomGateResponse, PhantomRecoveryRequest
 from app.utils.phantom_core import phantom_core
+from app.utils.phantom_keepalive import phantom_keepalive_lane
 
 router = APIRouter(prefix="/phantom", tags=["phantom-core"])
 
 
 @router.get("/status")
 async def phantom_status():
-    return phantom_core.status()
+    status = phantom_core.status()
+    status["keepalive"] = phantom_keepalive_lane.status()
+    return status
 
 
 @router.get("/health")
 async def phantom_health():
     status = phantom_core.heartbeat()
+    keepalive = phantom_keepalive_lane.status()
     return {
         "ok": True,
         "mode": status.get("mode"),
@@ -23,6 +27,14 @@ async def phantom_health():
         "active_containment_count": status.get("active_containment_count"),
         "casual_disable_supported": False,
         "emergency_containment_supported": True,
+        "keepalive": {
+            "enabled": keepalive.get("enabled"),
+            "started": keepalive.get("started"),
+            "interval_seconds": keepalive.get("interval_seconds"),
+            "run_count": keepalive.get("run_count"),
+            "last_completed_at": keepalive.get("last_completed_at"),
+            "last_error": keepalive.get("last_error"),
+        },
     }
 
 
@@ -86,3 +98,18 @@ async def phantom_invariants():
         "owner_invariants": status.get("owner_invariants"),
         "registered_irreversible_actions": status.get("registered_irreversible_actions"),
     }
+
+
+@router.get("/keepalive/status")
+async def phantom_keepalive_status():
+    return phantom_keepalive_lane.status()
+
+
+@router.post("/keepalive/run")
+async def phantom_keepalive_run(project_slug: str | None = None):
+    return phantom_keepalive_lane.run_once(reason="manual", project_slug=project_slug)
+
+
+@router.post("/keepalive/configure")
+async def phantom_keepalive_configure(enabled: bool | None = None, interval_seconds: int | None = None):
+    return phantom_keepalive_lane.configure(enabled=enabled, interval_seconds=interval_seconds)
