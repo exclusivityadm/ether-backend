@@ -6,6 +6,8 @@ from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
 
 from app.utils.audit import audit_event, audit_snapshot, list_recent_audit_events
+from app.utils.phantom_core import phantom_core
+from app.utils.phantom_keepalive import phantom_keepalive_lane
 from app.utils.production_gate import production_gate_snapshot
 from app.utils.project_supabase_signal import build_signal_payload, project_signal_readiness, record_and_verify_project_signal
 from app.utils.projects import get_project, list_projects
@@ -47,6 +49,39 @@ class CronSignalRequest(BaseModel):
     status: str = "ok"
     include_unconfigured: bool = False
     meta: Dict[str, Any] = Field(default_factory=dict)
+
+
+def _phantom_operations_snapshot() -> Dict[str, Any]:
+    status = phantom_core.status()
+    keepalive = phantom_keepalive_lane.status()
+    mode = status.get("mode")
+    active_containment_count = int(status.get("active_containment_count") or 0)
+    last_error = keepalive.get("last_error")
+    keepalive_verified = bool(keepalive.get("last_completed_at") and not last_error)
+    launch_blockers: list[str] = []
+    if mode in {"locked", "degraded", "safe_mode", "emergency_containment"}:
+        launch_blockers.append(f"Phantom Core mode is {mode}; dangerous writes are paused.")
+    if active_containment_count:
+        launch_blockers.append(f"Phantom Core has {active_containment_count} active containment(s).")
+    if last_error:
+        launch_blockers.append(f"Phantom keepalive lane is not clean: {last_error}")
+    return {
+        "ready": not launch_blockers,
+        "launch_blocking": bool(launch_blockers),
+        "launch_blockers": launch_blockers,
+        "phantom_core": status,
+        "phantom_keepalive": keepalive,
+        "keepalive_verified": keepalive_verified,
+        "routes": {
+            "phantom_status": "/phantom/status",
+            "phantom_health": "/phantom/health",
+            "phantom_events": "/phantom/events",
+            "phantom_invariants": "/phantom/invariants",
+            "phantom_keepalive_status": "/phantom/keepalive/status",
+            "phantom_keepalive_run": "/phantom/keepalive/run",
+            "phantom_keepalive_configure": "/phantom/keepalive/configure",
+        },
+    }
 
 
 def _project_status_rows() -> tuple[list[dict[str, Any]], dict[str, Any]]:
@@ -134,8 +169,11 @@ async def production_checklist():
             {"item": "Apply Supabase signal SQL to Circa Haus", "route": "/readiness/circa_haus", "required": True},
             {"item": "Apply Supabase signal SQL to Exclusivity", "route": "/readiness/exclusivity", "required": True},
             {"item": "Run suite smoke test", "route": "/operations/suite/smoke", "required": True},
-            {"item": "Run cron signal test", "route": "/operations/cron/signal", "required": True},
+            {"item": "Run normal cron signal test", "route": "/operations/cron/signal", "required": True},
             {"item": "Confirm signal health", "route": "/operations/signal/health", "required": True},
+            {"item": "Confirm Phantom Core status", "route": "/phantom/status", "required": True},
+            {"item": "Confirm Phantom keepalive status", "route": "/phantom/keepalive/status", "required": True},
+            {"item": "Confirm no active Phantom containment", "route": "/phantom/events", "required": True},
             {"item": "Confirm no control blockers", "route": "/controls/blockers", "required": True},
             {"item": "Confirm provider readiness", "route": "/providers/readiness/suite", "required": True},
             {"item": "Confirm Sentinel is clear", "route": "/sentinel/status", "required": True},
@@ -150,18 +188,25 @@ async def production_checklist():
 async def suite_operations_status():
     rows, summary = _project_status_rows()
     suite_ready = summary["core_ready_for_cron"]
+    phantom = _phantom_operations_snapshot()
     return {
         "ok": True,
         "suite_ready_for_core_signal": suite_ready,
         "summary": summary,
         "production_gate": production_gate_snapshot(include_soft_warnings=False),
         "signal_verification": signal_verification_snapshot(),
+        "phantom_core": phantom.get("phantom_core"),
+        "phantom_keepalive": phantom.get("phantom_keepalive"),
+        "phantom_launch_blockers": phantom.get("launch_blockers", []),
         "audit": audit_snapshot(limit=12),
         "cron": {
             "ready": suite_ready,
             "status_route": "/operations/cron/status",
             "signal_route": "/operations/cron/signal",
             "expected_projects": list(CORE_SIGNAL_PROJECTS),
+            "normal_lane": "Circa Haus / Exclusivity / Sova -> Ether -> Supabase",
+            "phantom_lane": "Phantom Core -> Ether -> Supabase",
+            "phantom_keepalive_status_route": "/phantom/keepalive/status",
         },
         "next_actions": [
             "Set project Supabase URL and service role variables in Render for Circa Haus and Exclusivity.",
@@ -169,6 +214,8 @@ async def suite_operations_status():
             "Set per-project Ether signal secrets before requiring proof mode.",
             "Run POST /operations/suite/smoke for a bundled readiness + signal + audit smoke test.",
             "Run POST /operations/cron/signal when cron env and Supabase support are ready.",
+            "Run POST /phantom/keepalive/run to verify the second-layer Phantom keepalive lane after credentials are wired.",
+            "Confirm /phantom/status has mode=normal and no active containment before launch.",
             "Confirm /operations/production/gate returns decision=go before placing Ether in front of Circa Haus.",
         ],
         "projects": rows,
@@ -179,6 +226,7 @@ async def suite_operations_status():
 async def cron_status():
     rows, summary = _project_status_rows()
     verification = signal_verification_snapshot()
+    phantom = _phantom_operations_snapshot()
     last_success = verification.get("last_success_by_project", {})
     ready_projects = [row["slug"] for row in rows if row["slug"] in CORE_SIGNAL_PROJECTS and row["signal_readiness"].get("ready_for_real_signal")]
     verified_projects = [slug for slug in CORE_SIGNAL_PROJECTS if last_success.get(slug)]
@@ -195,6 +243,9 @@ async def cron_status():
         "unverified_projects": unverified_projects,
         "summary": summary,
         "signal_verification": verification,
+        "phantom_core": phantom.get("phantom_core"),
+        "phantom_keepalive": phantom.get("phantom_keepalive"),
+        "phantom_keepalive_verified": phantom.get("keepalive_verified"),
         "routes": {
             "production_gate": "/operations/production/gate",
             "cron_signal": "/operations/cron/signal",
@@ -203,12 +254,17 @@ async def cron_status():
             "signal_history": "/operations/signal/history",
             "signal_health": "/operations/signal/health",
             "audit_summary": "/operations/audit/summary",
+            "phantom_status": "/phantom/status",
+            "phantom_keepalive_status": "/phantom/keepalive/status",
+            "phantom_keepalive_run": "/phantom/keepalive/run",
         },
         "operator_notes": [
             "Cron should only be considered ready when Circa Haus and Exclusivity are configured for real signal writes.",
             "Cron should only be considered verified when both projects have a successful write + readback signal run.",
+            "Phantom keepalive is a second safety lane and does not replace the normal app/Ether cron lane.",
             "If missing_projects is not empty, wire project Supabase env vars and apply the Supabase signal SQL first.",
             "If unverified_projects is not empty after wiring, run /operations/cron/signal and inspect failure reasons.",
+            "After normal cron is verified, run /phantom/keepalive/run and confirm /phantom/keepalive/status is clean.",
         ],
     }
 
@@ -244,11 +300,14 @@ async def cron_signal(body: CronSignalRequest, request: Request):
         "cron_ready_after_run": bool(result.get("ok")),
         "signal": result,
         "signal_verification": signal_verification_snapshot(),
+        "phantom_core": phantom_core.status(),
+        "phantom_keepalive": phantom_keepalive_lane.status(),
         "production_gate": production_gate_snapshot(include_soft_warnings=False),
         "audit": audit_snapshot(limit=12),
         "operator_notes": [
             "If ok is true, write + readback verification succeeded for every requested project.",
             "If ok is false, check readiness, Render env vars, Supabase SQL, service-role permissions, and readback failure reasons.",
+            "This route verifies the normal cron lane only; use /phantom/keepalive/run for the second-layer Phantom lane.",
         ],
     }
 
@@ -298,6 +357,8 @@ async def signal_health(project_slug: Optional[str] = None):
         "launch_blocking": bool(launch_blockers),
         "launch_blockers": launch_blockers,
         "snapshot": snapshot,
+        "phantom_core": phantom_core.status(),
+        "phantom_keepalive": phantom_keepalive_lane.status(),
     }
 
 
@@ -326,12 +387,17 @@ async def signal_readiness_index():
             "signal_history": "/operations/signal/history",
             "audit_recent": "/operations/audit/recent",
             "audit_summary": "/operations/audit/summary",
+            "phantom_status": "/phantom/status",
+            "phantom_events": "/phantom/events",
+            "phantom_invariants": "/phantom/invariants",
+            "phantom_keepalive_status": "/phantom/keepalive/status",
+            "phantom_keepalive_run": "/phantom/keepalive/run",
             "all_project_readiness": "/readiness",
             "project_readiness": "/readiness/{project_slug}",
             "manual_project_signal": "/operations/signal/{project_slug}",
             "manual_multi_project_signal": "/operations/signal/all",
         },
-        "intended_use": "Internal-only readiness, production gate, verified signal history, audit visibility, manual signal operations, Render Cron, admin smoke tests, and wiring-day verification.",
+        "intended_use": "Internal-only readiness, production gate, verified signal history, audit visibility, manual signal operations, Render Cron, Phantom keepalive, admin smoke tests, and wiring-day verification.",
     }
 
 
@@ -477,12 +543,15 @@ async def suite_smoke_test(body: SuiteSmokeTestRequest, request: Request):
         "signal": signal_result,
         "after": {"summary": after_summary, "projects": after_rows},
         "signal_verification": signal_verification_snapshot(),
+        "phantom_core": phantom_core.status(),
+        "phantom_keepalive": phantom_keepalive_lane.status(),
         "production_gate": production_gate_snapshot(include_soft_warnings=False),
         "audit": audit,
         "operator_notes": [
             "If signal.ok is false because projects are not configured, wire Render env vars and apply Supabase SQL first.",
             "If signal writes fail, inspect write_result in /operations/signal/history.",
             "If readback fails, inspect Supabase table/RPC permissions and ether_signals rows.",
+            "Run /phantom/keepalive/run after normal signal verification to validate the second-layer Phantom lane.",
             "Final launch requires /operations/production/gate decision=go.",
         ],
     }
