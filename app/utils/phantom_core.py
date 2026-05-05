@@ -23,6 +23,11 @@ DEFAULT_IRREVERSIBLE_ACTIONS = {
     "admin.elevate",
     "admin.transfer_ownership",
     "admin.grant_root_access",
+    "controls.project.disable",
+    "controls.project.enable",
+    "controls.provider.disable",
+    "controls.provider.enable",
+    "controls.recover",
     "provider.rotate_key",
     "provider.disable_critical",
     "provider.enable_critical",
@@ -197,7 +202,6 @@ class PhantomCoreEngine:
         containment = self._matching_containment(project_slug=project_slug, provider=provider, action=action)
         registered = action in self.irreversible_actions
         dangerous = severity in DANGEROUS_SEVERITIES or registered
-        decision = "allow"
         notes: list[str] = []
 
         with self._lock:
