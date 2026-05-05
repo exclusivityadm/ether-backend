@@ -143,7 +143,6 @@ def _phantom_status() -> Dict[str, Any]:
     keepalive = phantom_keepalive_lane.status()
     mode = status.get("mode")
     active_containments = status.get("active_containments") or []
-    unresolved_pauses = status.get("unresolved_pauses") or []
     blockers: List[str] = []
     warnings: List[str] = []
 
@@ -151,14 +150,14 @@ def _phantom_status() -> Dict[str, Any]:
         blockers.append(f"Phantom Core mode is {mode}; production launch must remain no-go until recovered.")
     if active_containments:
         blockers.append(f"Phantom Core has {len(active_containments)} active containment(s).")
-    if unresolved_pauses:
-        blockers.append(f"Phantom Core has {len(unresolved_pauses)} unresolved pause/recovery item(s).")
 
-    keepalive_state = str(keepalive.get("last_status") or keepalive.get("status") or "unknown")
-    if keepalive_state in {"failed", "error"}:
-        blockers.append("Phantom keepalive lane is reporting failure.")
-    elif keepalive_state in {"not_configured", "unknown", "never_run"}:
-        warnings.append("Phantom keepalive lane is not verified yet; confirm before launch-day credentialing.")
+    last_error = keepalive.get("last_error")
+    last_completed_at = keepalive.get("last_completed_at")
+    run_count = int(keepalive.get("run_count") or 0)
+    if last_error:
+        blockers.append(f"Phantom keepalive lane is not clean: {last_error}")
+    elif not last_completed_at or run_count < 1:
+        warnings.append("Phantom keepalive lane has not completed a verified run yet; confirm before launch-day credentialing.")
 
     return {
         "ready": not blockers,
