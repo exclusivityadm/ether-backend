@@ -5,6 +5,8 @@ from typing import Any, Dict, List, Optional
 
 from app.utils.audit import audit_snapshot
 from app.utils.control_plane import control_plane_state
+from app.utils.phantom_core import phantom_core
+from app.utils.phantom_keepalive import phantom_keepalive_lane
 from app.utils.provider_readiness import provider_readiness_for_suite
 from app.utils.sentinel import sentinel_engine
 from app.utils.signal_verification_store import signal_verification_snapshot
@@ -38,6 +40,7 @@ OPTIONAL_BUT_EXPECTED_ENV = [
     "CIRCA_HAUS_ETHER_SIGNAL_SECRET",
     "EXCLUSIVITY_ETHER_SIGNAL_SECRET",
 ]
+PHANTOM_LAUNCH_BLOCKING_MODES = {"locked", "degraded", "safe_mode", "emergency_containment"}
 
 
 def _present(key: str) -> bool:
@@ -135,6 +138,37 @@ def _webhook_status() -> Dict[str, Any]:
     }
 
 
+def _phantom_status() -> Dict[str, Any]:
+    status = phantom_core.status()
+    keepalive = phantom_keepalive_lane.status()
+    mode = status.get("mode")
+    active_containments = status.get("active_containments") or []
+    unresolved_pauses = status.get("unresolved_pauses") or []
+    blockers: List[str] = []
+    warnings: List[str] = []
+
+    if mode in PHANTOM_LAUNCH_BLOCKING_MODES:
+        blockers.append(f"Phantom Core mode is {mode}; production launch must remain no-go until recovered.")
+    if active_containments:
+        blockers.append(f"Phantom Core has {len(active_containments)} active containment(s).")
+    if unresolved_pauses:
+        blockers.append(f"Phantom Core has {len(unresolved_pauses)} unresolved pause/recovery item(s).")
+
+    keepalive_state = str(keepalive.get("last_status") or keepalive.get("status") or "unknown")
+    if keepalive_state in {"failed", "error"}:
+        blockers.append("Phantom keepalive lane is reporting failure.")
+    elif keepalive_state in {"not_configured", "unknown", "never_run"}:
+        warnings.append("Phantom keepalive lane is not verified yet; confirm before launch-day credentialing.")
+
+    return {
+        "ready": not blockers,
+        "blockers": blockers,
+        "warnings": warnings,
+        "status": status,
+        "keepalive": keepalive,
+    }
+
+
 def production_gate_snapshot(*, include_soft_warnings: bool = True) -> Dict[str, Any]:
     env = {
         "server": _env_group(REQUIRED_SERVER_ENV),
@@ -159,7 +193,11 @@ def production_gate_snapshot(*, include_soft_warnings: bool = True) -> Dict[str,
     sentinel_suite = _sentinel_status()
     signal = _signal_status()
     webhooks = _webhook_status()
+    phantom = _phantom_status()
     audit = audit_snapshot(limit=30)
+
+    if include_soft_warnings:
+        soft_warnings.extend(phantom.get("warnings", []))
 
     blockers = []
     blockers.extend(env_blockers)
@@ -168,6 +206,7 @@ def production_gate_snapshot(*, include_soft_warnings: bool = True) -> Dict[str,
     blockers.extend(sentinel_suite["blockers"])
     blockers.extend(signal["blockers"])
     blockers.extend(webhooks["blockers"])
+    blockers.extend(phantom["blockers"])
 
     sections = {
         "environment": env,
@@ -176,6 +215,7 @@ def production_gate_snapshot(*, include_soft_warnings: bool = True) -> Dict[str,
         "sentinel": sentinel_suite,
         "signal": signal,
         "webhooks": webhooks,
+        "phantom_core": phantom,
         "audit": audit,
     }
 
@@ -195,5 +235,7 @@ def production_gate_snapshot(*, include_soft_warnings: bool = True) -> Dict[str,
             "Run POST /operations/suite/smoke after env wiring and before launch.",
             "Run POST /operations/cron/signal after Render cron is configured.",
             "Confirm /operations/signal/health has no launch blockers for Circa Haus or Exclusivity.",
+            "Confirm /phantom/status and /phantom/keepalive/status show normal, verified state before launch.",
+            "Emergency containment is an all-stop for dangerous writes, not a Phantom Core shutdown path.",
         ],
     }
