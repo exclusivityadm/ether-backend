@@ -38,6 +38,15 @@ CIRCA_HAUS_LAUNCH_REQUIRED = {
     "google_workspace",
     "amazon_ses",
     "twilio",
+    "saia_merch_ideation",
+    "saia_rights_guidance",
+}
+
+# Planned/conditional providers are tracked, but they do not block launch until official
+# API/partner access, licensing scope, cost, and verifiable usage rights are confirmed.
+CIRCA_HAUS_CONDITIONAL_PROVIDERS = {
+    "epidemic_sound",
+    "artlist",
 }
 
 EXCLUSIVITY_LAUNCH_REQUIRED = {
@@ -74,6 +83,16 @@ PROVIDER_ENV_REQUIREMENTS: Dict[str, Dict[str, List[str]]] = {
         "openai": [
             "CIRCA_HAUS_OPENAI_API_KEY",
             "CIRCA_HAUS_OPENAI_MODEL",
+            "CIRCA_HAUS_OPENAI_IMAGE_MODEL",
+        ],
+        "saia_merch_ideation": [
+            "CIRCA_HAUS_OPENAI_API_KEY",
+            "CIRCA_HAUS_OPENAI_IMAGE_MODEL",
+            "CIRCA_HAUS_SAIA_MERCH_IDEATION_ENABLED",
+        ],
+        "saia_rights_guidance": [
+            "CIRCA_HAUS_OPENAI_API_KEY",
+            "CIRCA_HAUS_SAIA_RIGHTS_GUIDANCE_ENABLED",
         ],
         "elevenlabs": [
             "CIRCA_HAUS_ELEVENLABS_API_KEY",
@@ -119,6 +138,16 @@ PROVIDER_ENV_REQUIREMENTS: Dict[str, Dict[str, List[str]]] = {
             "CIRCA_HAUS_TWILIO_AUTH_TOKEN",
             "CIRCA_HAUS_TWILIO_WEBHOOK_SECRET",
         ],
+        "epidemic_sound": [
+            "CIRCA_HAUS_EPIDEMIC_SOUND_CLIENT_ID",
+            "CIRCA_HAUS_EPIDEMIC_SOUND_CLIENT_SECRET",
+            "CIRCA_HAUS_EPIDEMIC_SOUND_WEBHOOK_SECRET",
+        ],
+        "artlist": [
+            "CIRCA_HAUS_ARTLIST_CLIENT_ID",
+            "CIRCA_HAUS_ARTLIST_CLIENT_SECRET",
+            "CIRCA_HAUS_ARTLIST_WEBHOOK_SECRET",
+        ],
     },
     "exclusivity": {
         "supabase": [
@@ -147,6 +176,13 @@ def _required_set(project_slug: str) -> set[str]:
     return {"supabase"}
 
 
+def _conditional_set(project_slug: str) -> set[str]:
+    slug = project_slug.strip().lower()
+    if slug == "circa_haus":
+        return set(CIRCA_HAUS_CONDITIONAL_PROVIDERS)
+    return set()
+
+
 def _signature_required_set(project_slug: str) -> set[str]:
     slug = project_slug.strip().lower()
     if slug == "circa_haus":
@@ -169,8 +205,10 @@ def provider_readiness_for_project(project_slug: str) -> Dict[str, Any]:
         }
 
     required = _required_set(project.slug)
+    conditional = _conditional_set(project.slug)
     signature_required = _signature_required_set(project.slug)
-    signature_readiness = signature_readiness_for_project(project.slug, list(project.provider_set.keys()))
+    tracked_providers = set(project.provider_set.keys()).union(required).union(conditional)
+    signature_readiness = signature_readiness_for_project(project.slug, sorted(tracked_providers))
     signature_by_provider = {
         row.get("provider"): row for row in signature_readiness.get("providers", [])
     }
@@ -178,10 +216,12 @@ def provider_readiness_for_project(project_slug: str) -> Dict[str, Any]:
     launch_blockers: List[str] = []
     env_requirements = PROVIDER_ENV_REQUIREMENTS.get(project.slug, {})
 
-    for provider, enabled in sorted(project.provider_set.items()):
+    for provider in sorted(tracked_providers):
+        enabled = bool(project.provider_set.get(provider, provider in required or provider in conditional))
         normalized = provider.strip().lower()
         disabled = control_plane_state.provider_disabled(project.slug, normalized)
         required_for_launch = normalized in required
+        conditional_provider = normalized in conditional
         signature_required_for_launch = normalized in signature_required
         signature_configured = bool(signature_by_provider.get(normalized, {}).get("configured"))
         needed = env_requirements.get(normalized, [])
@@ -193,7 +233,7 @@ def provider_readiness_for_project(project_slug: str) -> Dict[str, Any]:
             configured = bool(signal.get("ready_for_real_signal")) and all(_has_env(key) for key in needed)
             missing = [key for key in needed if not _has_env(key)]
             if missing:
-                notes.extend([f"Missing {key}." for key in missing])
+                notes.extend([f"Missing {key}."] for key in missing)
             notes.extend(signal.get("notes") or [])
         elif needed:
             missing = [key for key in needed if not _has_env(key)]
@@ -205,6 +245,11 @@ def provider_readiness_for_project(project_slug: str) -> Dict[str, Any]:
         else:
             configured = bool(enabled)
             notes.append("No explicit environment requirements are registered for this provider yet.")
+
+        if conditional_provider:
+            notes.append(
+                "Conditional provider: track readiness, but do not block launch until official API/partner access, licensing scope, cost, and usage-right verification are confirmed."
+            )
 
         signature_row = signature_by_provider.get(normalized)
         if signature_row and signature_row.get("supported"):
@@ -222,6 +267,7 @@ def provider_readiness_for_project(project_slug: str) -> Dict[str, Any]:
 
         launch_blocking = bool(
             enabled
+            and not conditional_provider
             and (
                 (required_for_launch and (disabled or not configured))
                 or (signature_required_for_launch and not signature_configured)
@@ -244,23 +290,6 @@ def provider_readiness_for_project(project_slug: str) -> Dict[str, Any]:
             ).to_dict()
         )
 
-    missing_required_provider_rows = sorted(required.difference(project.provider_set.keys()))
-    for provider in missing_required_provider_rows:
-        launch_blockers.append(provider)
-        provider_rows.append(
-            ProviderReadinessResult(
-                provider=provider,
-                enabled=False,
-                disabled_by_control_plane=False,
-                configured=False,
-                signature_configured=False,
-                signature_required_for_launch=provider in signature_required,
-                required_for_launch=True,
-                launch_blocking=True,
-                notes=["Provider is required for launch but is missing from the Ether project registry."],
-            ).to_dict()
-        )
-
     project_disabled = control_plane_state.project_disabled(project.slug)
     if project_disabled:
         launch_blockers.append("project_disabled")
@@ -275,6 +304,7 @@ def provider_readiness_for_project(project_slug: str) -> Dict[str, Any]:
         "launch_ready": not unique_launch_blockers,
         "launch_blockers": unique_launch_blockers,
         "required_providers": sorted(required),
+        "conditional_providers": sorted(conditional),
         "signature_required_providers": sorted(signature_required),
         "signature_readiness": signature_readiness,
         "providers": provider_rows,
