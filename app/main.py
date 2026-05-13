@@ -7,6 +7,7 @@ from app.middleware.errors import install_error_handlers
 from app.middleware.internal_gate import InternalOnlyGate
 
 from app.routers.auth import router as auth_router
+from app.routers.circa_enhancements import router as circa_enhancements_router
 from app.routers.controls import router as controls_router
 from app.routers.health import router as health_router
 from app.routers.version import router as version_router
@@ -33,7 +34,7 @@ log = logging.getLogger("ether_v2.main")
 app = FastAPI(
     title="Ether Backend v2",
     version=settings.ETHER_VERSION,
-    description="Sealed internal-only Ether API (contracts + ingest + observability + admin control plane + sentinel enforcement/recovery + provider webhook operations + verified signal/keepalive + production gate + readiness checks + operations)",
+    description="Sealed internal-only Ether API (contracts + ingest + observability + admin control plane + sentinel enforcement/recovery + provider webhook operations + verified signal/keepalive + production gate + readiness checks + operations + Circa Haus enhanced creator commerce/rights flows)",
 )
 
 install_error_handlers(app)
@@ -68,6 +69,7 @@ app.include_router(providers_router)
 app.include_router(webhooks_router)
 app.include_router(sentinel_router)
 app.include_router(signal_router)
+app.include_router(circa_enhancements_router)
 
 @app.get("/")
 async def root():
@@ -130,6 +132,16 @@ async def root():
             "/db/status",
             "/db/tables",
             "/db/write",
+            "/circa/enhanced/scope",
+            "/circa/rights/attestations",
+            "/circa/rights/copyright-claims",
+            "/circa/merch/ideation/sessions",
+            "/circa/merch/concepts",
+            "/circa/merch/concepts/approve",
+            "/circa/merch/preflight-reviews",
+            "/circa/creator-shop",
+            "/circa/creator-shop/items",
+            "/circa/audio/license-verifications",
         ],
     }
 
@@ -140,4 +152,4 @@ async def startup_event():
     sentinel_engine.initialize()
     init_webhook_store()
     init_signal_verification_store()
-    log.info("Ether v2 starting — persistent audit, admin controls, Sentinel enforcement/recovery, provider webhook operations, verified signals, production gate, readiness, and operations loaded")
+    log.info("Ether v2 starting — persistent audit, admin controls, Sentinel enforcement/recovery, provider webhook operations, verified signals, production gate, readiness, operations, and Circa Haus enhanced routes loaded")
