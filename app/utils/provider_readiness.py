@@ -233,7 +233,7 @@ def provider_readiness_for_project(project_slug: str) -> Dict[str, Any]:
             configured = bool(signal.get("ready_for_real_signal")) and all(_has_env(key) for key in needed)
             missing = [key for key in needed if not _has_env(key)]
             if missing:
-                notes.extend([f"Missing {key}."] for key in missing)
+                notes.extend([f"Missing {key}." for key in missing])
             notes.extend(signal.get("notes") or [])
         elif needed:
             missing = [key for key in needed if not _has_env(key)]
