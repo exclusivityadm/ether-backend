@@ -8,6 +8,7 @@ from app.middleware.internal_gate import InternalOnlyGate
 
 from app.routers.auth import router as auth_router
 from app.routers.circa_enhancements import router as circa_enhancements_router
+from app.routers.circa_premium import router as circa_premium_router
 from app.routers.controls import router as controls_router
 from app.routers.health import router as health_router
 from app.routers.version import router as version_router
@@ -34,7 +35,7 @@ log = logging.getLogger("ether_v2.main")
 app = FastAPI(
     title="Ether Backend v2",
     version=settings.ETHER_VERSION,
-    description="Sealed internal-only Ether API (contracts + ingest + observability + admin control plane + sentinel enforcement/recovery + provider webhook operations + verified signal/keepalive + production gate + readiness checks + operations + Circa Haus enhanced creator commerce/rights flows)",
+    description="Sealed internal-only Ether API (contracts + ingest + observability + admin control plane + sentinel enforcement/recovery + provider webhook operations + verified signal/keepalive + production gate + readiness checks + operations + Circa Haus enhanced creator commerce/rights/premium workflows)",
 )
 
 install_error_handlers(app)
@@ -70,6 +71,7 @@ app.include_router(webhooks_router)
 app.include_router(sentinel_router)
 app.include_router(signal_router)
 app.include_router(circa_enhancements_router)
+app.include_router(circa_premium_router)
 
 @app.get("/")
 async def root():
@@ -142,6 +144,16 @@ async def root():
             "/circa/creator-shop",
             "/circa/creator-shop/items",
             "/circa/audio/license-verifications",
+            "/circa/premium/scope",
+            "/circa/premium/saia/merch-briefs",
+            "/circa/premium/saia/workflow-events",
+            "/circa/premium/collections",
+            "/circa/premium/collections/items",
+            "/circa/premium/drops/waitlist",
+            "/circa/premium/checkout/intents",
+            "/circa/premium/analytics/events",
+            "/circa/premium/audio/placements",
+            "/circa/premium/merch/publish-ready",
         ],
     }
 
@@ -152,4 +164,4 @@ async def startup_event():
     sentinel_engine.initialize()
     init_webhook_store()
     init_signal_verification_store()
-    log.info("Ether v2 starting — persistent audit, admin controls, Sentinel enforcement/recovery, provider webhook operations, verified signals, production gate, readiness, operations, and Circa Haus enhanced routes loaded")
+    log.info("Ether v2 starting — persistent audit, admin controls, Sentinel enforcement/recovery, provider webhook operations, verified signals, production gate, readiness, operations, and Circa Haus enhanced/premium routes loaded")
