@@ -36,14 +36,16 @@ CIRCA_HAUS_LAUNCH_REQUIRED = {
     "printful",
     "cloudflare",
     "google_workspace",
+    "amazon_ses",
+    "twilio",
 }
 
 EXCLUSIVITY_LAUNCH_REQUIRED = {
     "supabase",
 }
 
-# Webhook signature verification is required for providers whose incoming events
-# can affect money movement, user messaging, design publishing, or fulfillment.
+# Incoming provider events that can affect money movement, messaging, design publishing,
+# fulfillment, or user state must have webhook trust configured before live launch.
 CIRCA_HAUS_SIGNATURE_REQUIRED = {
     "stripe",
     "twilio",
@@ -56,20 +58,74 @@ EXCLUSIVITY_SIGNATURE_REQUIRED = set()
 
 PROVIDER_ENV_REQUIREMENTS: Dict[str, Dict[str, List[str]]] = {
     "circa_haus": {
-        "supabase": ["CIRCA_HAUS_SUPABASE_URL", "CIRCA_HAUS_SUPABASE_SERVICE_ROLE_KEY"],
-        "stripe": ["CIRCA_HAUS_STRIPE_SECRET_KEY", "CIRCA_HAUS_STRIPE_WEBHOOK_SECRET"],
-        "openai": ["CIRCA_HAUS_OPENAI_API_KEY"],
-        "elevenlabs": ["CIRCA_HAUS_ELEVENLABS_API_KEY", "CIRCA_HAUS_ELEVENLABS_TALETHIA_VOICE_ID"],
-        "canva": ["CIRCA_HAUS_CANVA_CLIENT_ID", "CIRCA_HAUS_CANVA_CLIENT_SECRET", "CIRCA_HAUS_CANVA_WEBHOOK_SECRET"],
-        "apliiq": ["CIRCA_HAUS_APLIIQ_API_KEY", "CIRCA_HAUS_APLIIQ_WEBHOOK_SECRET"],
-        "printful": ["CIRCA_HAUS_PRINTFUL_API_TOKEN", "CIRCA_HAUS_PRINTFUL_WEBHOOK_SECRET"],
-        "cloudflare": ["CIRCA_HAUS_CLOUDFLARE_ZONE_ID"],
-        "google_workspace": ["CIRCA_HAUS_SUPPORT_EMAIL", "CIRCA_HAUS_ADMIN_EMAIL"],
-        "amazon_ses": ["CIRCA_HAUS_SES_FROM_EMAIL"],
-        "twilio": ["CIRCA_HAUS_TWILIO_ACCOUNT_SID", "CIRCA_HAUS_TWILIO_MESSAGING_SERVICE_SID", "CIRCA_HAUS_TWILIO_AUTH_TOKEN"],
+        "supabase": [
+            "CIRCA_HAUS_SUPABASE_URL",
+            "CIRCA_HAUS_SUPABASE_ANON_KEY",
+            "CIRCA_HAUS_SUPABASE_SERVICE_ROLE_KEY",
+            "CIRCA_HAUS_ETHER_SIGNAL_SECRET",
+        ],
+        "stripe": [
+            "CIRCA_HAUS_STRIPE_PUBLISHABLE_KEY",
+            "CIRCA_HAUS_STRIPE_SECRET_KEY",
+            "CIRCA_HAUS_STRIPE_WEBHOOK_SECRET",
+            "CIRCA_HAUS_STRIPE_CONNECT_CLIENT_ID",
+            "CIRCA_HAUS_STRIPE_PLATFORM_FEE_BPS",
+        ],
+        "openai": [
+            "CIRCA_HAUS_OPENAI_API_KEY",
+            "CIRCA_HAUS_OPENAI_MODEL",
+        ],
+        "elevenlabs": [
+            "CIRCA_HAUS_ELEVENLABS_API_KEY",
+            "CIRCA_HAUS_ELEVENLABS_TALETHIA_VOICE_ID",
+            "CIRCA_HAUS_ELEVENLABS_AVA_BACKUP_VOICE_ID",
+        ],
+        "canva": [
+            "CIRCA_HAUS_CANVA_CLIENT_ID",
+            "CIRCA_HAUS_CANVA_CLIENT_SECRET",
+            "CIRCA_HAUS_CANVA_WEBHOOK_SECRET",
+        ],
+        "apliiq": [
+            "CIRCA_HAUS_APLIIQ_API_KEY",
+            "CIRCA_HAUS_APLIIQ_API_SECRET",
+            "CIRCA_HAUS_APLIIQ_WEBHOOK_SECRET",
+        ],
+        "printful": [
+            "CIRCA_HAUS_PRINTFUL_API_TOKEN",
+            "CIRCA_HAUS_PRINTFUL_WEBHOOK_SECRET",
+        ],
+        "cloudflare": [
+            "CIRCA_HAUS_CLOUDFLARE_ACCOUNT_ID",
+            "CIRCA_HAUS_CLOUDFLARE_ZONE_ID",
+            "CIRCA_HAUS_CLOUDFLARE_API_TOKEN",
+            "CIRCA_HAUS_PUBLIC_APP_DOMAIN",
+            "CIRCA_HAUS_ADMIN_DOMAIN",
+            "CIRCA_HAUS_QR_DOMAIN",
+        ],
+        "google_workspace": [
+            "CIRCA_HAUS_SUPPORT_EMAIL",
+            "CIRCA_HAUS_ADMIN_EMAIL",
+            "CIRCA_HAUS_GOOGLE_WORKSPACE_DOMAIN",
+        ],
+        "amazon_ses": [
+            "CIRCA_HAUS_SES_REGION",
+            "CIRCA_HAUS_SES_ACCESS_KEY_ID",
+            "CIRCA_HAUS_SES_SECRET_ACCESS_KEY",
+            "CIRCA_HAUS_SES_FROM_EMAIL",
+        ],
+        "twilio": [
+            "CIRCA_HAUS_TWILIO_ACCOUNT_SID",
+            "CIRCA_HAUS_TWILIO_MESSAGING_SERVICE_SID",
+            "CIRCA_HAUS_TWILIO_AUTH_TOKEN",
+            "CIRCA_HAUS_TWILIO_WEBHOOK_SECRET",
+        ],
     },
     "exclusivity": {
-        "supabase": ["EXCLUSIVITY_SUPABASE_URL", "EXCLUSIVITY_SUPABASE_SERVICE_ROLE_KEY"],
+        "supabase": [
+            "EXCLUSIVITY_SUPABASE_URL",
+            "EXCLUSIVITY_SUPABASE_SERVICE_ROLE_KEY",
+            "EXCLUSIVITY_ETHER_SIGNAL_SECRET",
+        ],
         "stripe": ["EXCLUSIVITY_STRIPE_SECRET_KEY"],
         "twilio": ["EXCLUSIVITY_TWILIO_ACCOUNT_SID"],
         "openai": ["EXCLUSIVITY_OPENAI_API_KEY"],
@@ -134,7 +190,10 @@ def provider_readiness_for_project(project_slug: str) -> Dict[str, Any]:
 
         if normalized == "supabase":
             signal = project_signal_readiness(project.slug).to_dict()
-            configured = bool(signal.get("ready_for_real_signal"))
+            configured = bool(signal.get("ready_for_real_signal")) and all(_has_env(key) for key in needed)
+            missing = [key for key in needed if not _has_env(key)]
+            if missing:
+                notes.extend([f"Missing {key}." for key in missing])
             notes.extend(signal.get("notes") or [])
         elif needed:
             missing = [key for key in needed if not _has_env(key)]
@@ -185,17 +244,36 @@ def provider_readiness_for_project(project_slug: str) -> Dict[str, Any]:
             ).to_dict()
         )
 
+    missing_required_provider_rows = sorted(required.difference(project.provider_set.keys()))
+    for provider in missing_required_provider_rows:
+        launch_blockers.append(provider)
+        provider_rows.append(
+            ProviderReadinessResult(
+                provider=provider,
+                enabled=False,
+                disabled_by_control_plane=False,
+                configured=False,
+                signature_configured=False,
+                signature_required_for_launch=provider in signature_required,
+                required_for_launch=True,
+                launch_blocking=True,
+                notes=["Provider is required for launch but is missing from the Ether project registry."],
+            ).to_dict()
+        )
+
     project_disabled = control_plane_state.project_disabled(project.slug)
     if project_disabled:
         launch_blockers.append("project_disabled")
+
+    unique_launch_blockers = sorted(set(launch_blockers))
 
     return {
         "ok": True,
         "project_slug": project.slug,
         "display_name": project.display_name,
         "project_disabled": project_disabled,
-        "launch_ready": not launch_blockers,
-        "launch_blockers": launch_blockers,
+        "launch_ready": not unique_launch_blockers,
+        "launch_blockers": unique_launch_blockers,
         "required_providers": sorted(required),
         "signature_required_providers": sorted(signature_required),
         "signature_readiness": signature_readiness,
