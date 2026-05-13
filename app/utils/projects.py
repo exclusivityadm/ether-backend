@@ -71,9 +71,7 @@ def _default_projects() -> List[Dict[str, Any]]:
             "display_name": "Circa Haus",
             "status": "launch_preparation",
             "environment": settings.ETHER_ENVIRONMENT,
-            # Keep old app_ids only as internal resolver aliases for older builds/signals.
-            # Do not expose old brand names in user-facing Circa Haus surfaces.
-            "app_ids": ["circa_haus", "aurabeta", "salute"],
+            "app_ids": ["circa_haus"],
             "provider_set": {
                 "supabase": True,
                 "stripe": True,
@@ -106,7 +104,7 @@ def _default_projects() -> List[Dict[str, Any]]:
                 "tagline": "The trusted home for creator independence",
                 "ai_name": "Saia",
                 "ai_positioning": "Co-Captain",
-                "identity": "brasshaus-luxury-steampunk",
+                "identity": "circa-haus-luxury-navy-gold",
             },
             "allowed_roles": ["supporter", "creator", "admin"],
             "admin_surface_id": "circa-haus-admin",
