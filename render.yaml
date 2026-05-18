@@ -13,9 +13,13 @@ services:
       - key: ETHER_ENVIRONMENT
         value: production
       - key: ETHER_VERSION
-        value: 2.1.0-foundation
+        value: 2.2.0-circa-haus-precredential
+      - key: GIT_SHA
+        sync: false
       - key: ETHER_CORS_MODE
         value: none
+      - key: ETHER_CORS_ALLOW_ORIGINS
+        sync: false
       - key: ETHER_ALLOWED_SOURCES
         value: exclusivity,circa_haus,admin
       - key: ETHER_MAX_BODY_BYTES
@@ -28,13 +32,29 @@ services:
         value: "true"
       - key: ETHER_BOOTSTRAP_EXPOSE_PUBLIC_CONFIG
         value: "false"
+      - key: ETHER_PUBLIC_BASE_URL
+        sync: false
+      - key: ETHER_CRON_SECRET
+        sync: false
+      - key: ETHER_PROJECT_REGISTRY_JSON
+        sync: false
+      - key: ETHER_PROJECTS_JSON
+        sync: false
       - key: ETHER_SENTINEL_AI_ENABLED
         value: "false"
       - key: ETHER_SENTINEL_AI_MODEL
         value: gpt-5.5-thinking
+      - key: PHANTOM_CORE_POLICY_VERSION
+        value: phantom-core-launch-v1
+      - key: GHOST_PHANTOM_ENABLED
+        value: "true"
       - key: ETHER_INTERNAL_TOKEN
         sync: false
+
+      # Circa Haus Supabase + signal lane
       - key: CIRCA_HAUS_SUPABASE_URL
+        sync: false
+      - key: CIRCA_HAUS_SUPABASE_ANON_KEY
         sync: false
       - key: CIRCA_HAUS_SUPABASE_SERVICE_ROLE_KEY
         sync: false
@@ -44,6 +64,100 @@ services:
         value: ether_signal
       - key: CIRCA_HAUS_SIGNAL_TABLE
         value: ether_signals
+
+      # Circa Haus payments / AI / comms / providers
+      - key: CIRCA_HAUS_STRIPE_PUBLISHABLE_KEY
+        sync: false
+      - key: CIRCA_HAUS_STRIPE_SECRET_KEY
+        sync: false
+      - key: CIRCA_HAUS_STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: CIRCA_HAUS_STRIPE_CONNECT_CLIENT_ID
+        sync: false
+      - key: CIRCA_HAUS_STRIPE_PLATFORM_FEE_BPS
+        value: "150"
+      - key: CIRCA_HAUS_OPENAI_API_KEY
+        sync: false
+      - key: CIRCA_HAUS_OPENAI_MODEL
+        value: gpt-5.5-thinking
+      - key: CIRCA_HAUS_OPENAI_IMAGE_MODEL
+        sync: false
+      - key: CIRCA_HAUS_SAIA_RIGHTS_GUIDANCE_ENABLED
+        value: "true"
+      - key: CIRCA_HAUS_SAIA_MERCH_IDEATION_ENABLED
+        value: "true"
+      - key: CIRCA_HAUS_ELEVENLABS_API_KEY
+        sync: false
+      - key: CIRCA_HAUS_ELEVENLABS_TALETHIA_VOICE_ID
+        sync: false
+      - key: CIRCA_HAUS_ELEVENLABS_AVA_BACKUP_VOICE_ID
+        sync: false
+      - key: CIRCA_HAUS_TWILIO_ACCOUNT_SID
+        sync: false
+      - key: CIRCA_HAUS_TWILIO_MESSAGING_SERVICE_SID
+        sync: false
+      - key: CIRCA_HAUS_TWILIO_AUTH_TOKEN
+        sync: false
+      - key: CIRCA_HAUS_TWILIO_WEBHOOK_SECRET
+        sync: false
+      - key: CIRCA_HAUS_SES_REGION
+        sync: false
+      - key: CIRCA_HAUS_SES_ACCESS_KEY_ID
+        sync: false
+      - key: CIRCA_HAUS_SES_SECRET_ACCESS_KEY
+        sync: false
+      - key: CIRCA_HAUS_SES_FROM_EMAIL
+        sync: false
+      - key: CIRCA_HAUS_SUPPORT_EMAIL
+        sync: false
+      - key: CIRCA_HAUS_ADMIN_EMAIL
+        sync: false
+      - key: CIRCA_HAUS_GOOGLE_WORKSPACE_DOMAIN
+        sync: false
+      - key: CIRCA_HAUS_CANVA_CLIENT_ID
+        sync: false
+      - key: CIRCA_HAUS_CANVA_CLIENT_SECRET
+        sync: false
+      - key: CIRCA_HAUS_CANVA_WEBHOOK_SECRET
+        sync: false
+      - key: CIRCA_HAUS_APLIIQ_API_KEY
+        sync: false
+      - key: CIRCA_HAUS_APLIIQ_API_SECRET
+        sync: false
+      - key: CIRCA_HAUS_APLIIQ_WEBHOOK_SECRET
+        sync: false
+      - key: CIRCA_HAUS_PRINTFUL_API_TOKEN
+        sync: false
+      - key: CIRCA_HAUS_PRINTFUL_WEBHOOK_SECRET
+        sync: false
+      - key: CIRCA_HAUS_CLOUDFLARE_ACCOUNT_ID
+        sync: false
+      - key: CIRCA_HAUS_CLOUDFLARE_ZONE_ID
+        sync: false
+      - key: CIRCA_HAUS_CLOUDFLARE_API_TOKEN
+        sync: false
+      - key: CIRCA_HAUS_PUBLIC_APP_DOMAIN
+        sync: false
+      - key: CIRCA_HAUS_ADMIN_DOMAIN
+        sync: false
+      - key: CIRCA_HAUS_QR_DOMAIN
+        sync: false
+
+      # Licensed audio placeholders
+      - key: CIRCA_HAUS_EPIDEMIC_SOUND_CLIENT_ID
+        sync: false
+      - key: CIRCA_HAUS_EPIDEMIC_SOUND_CLIENT_SECRET
+        sync: false
+      - key: CIRCA_HAUS_EPIDEMIC_SOUND_WEBHOOK_SECRET
+        sync: false
+      - key: CIRCA_HAUS_ARTLIST_CLIENT_ID
+        sync: false
+      - key: CIRCA_HAUS_ARTLIST_CLIENT_SECRET
+        sync: false
+      - key: CIRCA_HAUS_ARTLIST_WEBHOOK_SECRET
+        sync: false
+
+      # Exclusivity signal lane
       - key: EXCLUSIVITY_SUPABASE_URL
         sync: false
       - key: EXCLUSIVITY_SUPABASE_SERVICE_ROLE_KEY
@@ -53,4 +167,24 @@ services:
       - key: EXCLUSIVITY_SIGNAL_RPC
         value: ether_signal
       - key: EXCLUSIVITY_SIGNAL_TABLE
+        value: ether_signals
+      - key: EXCLUSIVITY_STRIPE_SECRET_KEY
+        sync: false
+      - key: EXCLUSIVITY_TWILIO_ACCOUNT_SID
+        sync: false
+      - key: EXCLUSIVITY_OPENAI_API_KEY
+        sync: false
+      - key: EXCLUSIVITY_ELEVENLABS_API_KEY
+        sync: false
+
+      # Sova placeholder lane, optional until active
+      - key: SOVA_SUPABASE_URL
+        sync: false
+      - key: SOVA_SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: SOVA_ETHER_SIGNAL_SECRET
+        sync: false
+      - key: SOVA_SIGNAL_RPC
+        value: ether_signal
+      - key: SOVA_SIGNAL_TABLE
         value: ether_signals
