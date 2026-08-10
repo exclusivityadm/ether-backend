@@ -24,7 +24,6 @@ from app.routers.sentinel import router as sentinel_router
 from app.routers.signal import router as signal_router
 from app.routers.webhooks import router as webhooks_router
 from app.routers.intelligence import router as intelligence_router
-from app.routers.engineering import router as engineering_router
 
 from app.utils.agent_handlers import register_builtin_agent_handlers
 from app.utils.audit import initialize_audit
@@ -39,7 +38,7 @@ log = logging.getLogger("ether_v2.main")
 app = FastAPI(
     title="Ether Backend v2",
     version=settings.ETHER_VERSION,
-    description="Sealed internal-only Ether API (contracts + ingest + observability + admin control plane + sentinel enforcement/recovery + provider webhook operations + verified ratcheting signals + agent/web intelligence + internal engineering access + production gate + readiness checks + operations + project-specific adapters)",
+    description="Sealed internal-only Ether API (contracts + ingest + observability + admin control plane + sentinel enforcement/recovery + provider webhook operations + verified ratcheting signals + agent/web intelligence + production gate + readiness checks + operations + project-specific adapters)",
 )
 
 install_error_handlers(app)
@@ -59,7 +58,6 @@ app.add_middleware(
     internal_token=settings.ETHER_INTERNAL_TOKEN,
     allowed_sources=settings.ETHER_ALLOWED_SOURCES,
     exempt_prefixes=("/health", "/version", "/"),
-    exempt_paths=("/engineering/exchange",),
 )
 
 app.include_router(health_router)
@@ -77,7 +75,6 @@ app.include_router(webhooks_router)
 app.include_router(sentinel_router)
 app.include_router(signal_router)
 app.include_router(intelligence_router)
-app.include_router(engineering_router)
 app.include_router(circa_enhancements_router)
 app.include_router(circa_premium_router)
 
@@ -106,9 +103,7 @@ async def root():
             "/signal/handshake", "/signal/heartbeat", "/signal/lanes",
             "/intelligence/agents", "/intelligence/agents/lease", "/intelligence/agents/jobs",
             "/intelligence/web/sources", "/intelligence/web/changes", "/intelligence/web/route",
-            "/intelligence/latency", "/engineering/tickets", "/engineering/exchange",
-            "/engineering/session", "/engineering/revoke", "/engineering/sessions",
-            "/db/status", "/db/tables", "/db/write",
+            "/intelligence/latency", "/db/status", "/db/tables", "/db/write",
             "/circa/enhanced/scope", "/circa/rights/attestations", "/circa/rights/copyright-claims",
             "/circa/merch/ideation/sessions", "/circa/merch/concepts", "/circa/merch/concepts/approve",
             "/circa/merch/preflight-reviews", "/circa/creator-shop", "/circa/creator-shop/items",
@@ -128,4 +123,4 @@ async def startup_event():
     init_webhook_store()
     init_signal_verification_store()
     register_builtin_agent_handlers()
-    log.info("Ether v2 starting — persistent audit, admin controls, Sentinel enforcement/recovery, provider webhook operations, rotating proof signals, executable agent/web intelligence, internal engineering access, latency telemetry, production gate, readiness, operations, and project-specific adapters loaded")
+    log.info("Ether v2 starting — persistent audit, admin controls, Sentinel enforcement/recovery, provider webhook operations, rotating proof signals, executable agent/web intelligence, latency telemetry, production gate, readiness, operations, and project-specific adapters loaded")
