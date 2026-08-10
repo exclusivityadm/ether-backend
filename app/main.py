@@ -25,6 +25,7 @@ from app.routers.signal import router as signal_router
 from app.routers.webhooks import router as webhooks_router
 from app.routers.intelligence import router as intelligence_router
 
+from app.utils.agent_handlers import register_builtin_agent_handlers
 from app.utils.audit import initialize_audit
 from app.utils.control_plane import control_plane_state
 from app.utils.sentinel import sentinel_engine
@@ -121,4 +122,5 @@ async def startup_event():
     sentinel_engine.initialize()
     init_webhook_store()
     init_signal_verification_store()
-    log.info("Ether v2 starting — persistent audit, admin controls, Sentinel enforcement/recovery, provider webhook operations, rotating proof signals, agent/web intelligence, latency telemetry, production gate, readiness, operations, and project-specific adapters loaded")
+    register_builtin_agent_handlers()
+    log.info("Ether v2 starting — persistent audit, admin controls, Sentinel enforcement/recovery, provider webhook operations, rotating proof signals, executable agent/web intelligence, latency telemetry, production gate, readiness, operations, and project-specific adapters loaded")
