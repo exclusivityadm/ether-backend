@@ -1,7 +1,7 @@
 # app/middleware/internal_gate.py
 from __future__ import annotations
 
-from typing import Iterable, Tuple, Optional
+from typing import Iterable, Tuple
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
@@ -12,15 +12,7 @@ from app.utils.request_meta import extract_request_meta
 
 
 class InternalOnlyGate(BaseHTTPMiddleware):
-    """
-    Enforces Ether internal-only access.
-
-    Rules:
-    - Paths with exempt prefixes are always allowed (/, /health*, /version).
-    - Explicit public paths may be allowed for narrowly scoped bootstrap exchanges.
-    - All other paths require X-ETHER-INTERNAL-TOKEN matching env ETHER_INTERNAL_TOKEN.
-    - Optionally enforce source allowlist via X-ETHER-SOURCE header.
-    """
+    """Enforces Ether internal-only access."""
 
     def __init__(
         self,
@@ -28,19 +20,14 @@ class InternalOnlyGate(BaseHTTPMiddleware):
         internal_token: str,
         allowed_sources: Iterable[str],
         exempt_prefixes: Tuple[str, ...] = ("/health", "/version", "/"),
-        exempt_paths: Tuple[str, ...] = (),
     ):
         super().__init__(app)
         self.internal_token = internal_token or ""
-        self.allowed_sources = set([s.strip() for s in allowed_sources if s.strip()])
+        self.allowed_sources = {s.strip() for s in allowed_sources if s.strip()}
         self.exempt_prefixes = exempt_prefixes
-        self.exempt_paths = set(exempt_paths)
 
     async def dispatch(self, request: Request, call_next) -> Response:
         path = request.url.path or "/"
-
-        if path in self.exempt_paths:
-            return await call_next(request)
 
         for pfx in self.exempt_prefixes:
             if pfx == "/":
@@ -68,7 +55,7 @@ class InternalOnlyGate(BaseHTTPMiddleware):
             return EtherErrorResponse.forbidden(
                 code="ETHER_SOURCE_FORBIDDEN",
                 message=f"Source '{meta.source}' is not allowed.",
-                details={"allowed_sources": sorted(list(self.allowed_sources))},
+                details={"allowed_sources": sorted(self.allowed_sources)},
             )
 
         return await call_next(request)
