@@ -17,8 +17,9 @@ class InternalOnlyGate(BaseHTTPMiddleware):
 
     Rules:
     - Paths with exempt prefixes are always allowed (/, /health*, /version).
+    - Explicit public paths may be allowed for narrowly scoped bootstrap exchanges.
     - All other paths require X-ETHER-INTERNAL-TOKEN matching env ETHER_INTERNAL_TOKEN.
-    - Optionally enforce source allowlist via X-ETHER-SOURCE header (exclusivity/sova/...)
+    - Optionally enforce source allowlist via X-ETHER-SOURCE header.
     """
 
     def __init__(
@@ -27,16 +28,20 @@ class InternalOnlyGate(BaseHTTPMiddleware):
         internal_token: str,
         allowed_sources: Iterable[str],
         exempt_prefixes: Tuple[str, ...] = ("/health", "/version", "/"),
+        exempt_paths: Tuple[str, ...] = (),
     ):
         super().__init__(app)
         self.internal_token = internal_token or ""
         self.allowed_sources = set([s.strip() for s in allowed_sources if s.strip()])
         self.exempt_prefixes = exempt_prefixes
+        self.exempt_paths = set(exempt_paths)
 
     async def dispatch(self, request: Request, call_next) -> Response:
         path = request.url.path or "/"
 
-        # Exempt routes
+        if path in self.exempt_paths:
+            return await call_next(request)
+
         for pfx in self.exempt_prefixes:
             if pfx == "/":
                 if path == "/":
@@ -45,7 +50,6 @@ class InternalOnlyGate(BaseHTTPMiddleware):
             if path.startswith(pfx):
                 return await call_next(request)
 
-        # Must have a configured token
         if not self.internal_token:
             return EtherErrorResponse.unauthorized(
                 code="ETHER_INTERNAL_TOKEN_NOT_SET",
@@ -59,7 +63,6 @@ class InternalOnlyGate(BaseHTTPMiddleware):
                 message="Missing or invalid internal token.",
             )
 
-        # Optional: enforce source allowlist when header provided
         meta = extract_request_meta(request)
         if meta.source and self.allowed_sources and meta.source not in self.allowed_sources:
             return EtherErrorResponse.forbidden(
