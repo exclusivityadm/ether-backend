@@ -22,6 +22,7 @@ from app.routers.readiness import router as readiness_router
 from app.routers.sentinel import router as sentinel_router
 from app.routers.signal import router as signal_router
 from app.routers.webhooks import router as webhooks_router
+from app.routers.intelligence import router as intelligence_router
 
 from app.utils.audit import initialize_audit
 from app.utils.control_plane import control_plane_state
@@ -35,7 +36,7 @@ log = logging.getLogger("ether_v2.main")
 app = FastAPI(
     title="Ether Backend v2",
     version=settings.ETHER_VERSION,
-    description="Sealed internal-only Ether API (contracts + ingest + observability + admin control plane + sentinel enforcement/recovery + provider webhook operations + verified signal/keepalive + production gate + readiness checks + operations + Circa Haus enhanced creator commerce/rights/premium workflows)",
+    description="Sealed internal-only Ether API (contracts + ingest + observability + admin control plane + sentinel enforcement/recovery + provider webhook operations + verified ratcheting signals + agent/web intelligence + production gate + readiness checks + operations + project-specific adapters)",
 )
 
 install_error_handlers(app)
@@ -70,8 +71,10 @@ app.include_router(providers_router)
 app.include_router(webhooks_router)
 app.include_router(sentinel_router)
 app.include_router(signal_router)
+app.include_router(intelligence_router)
 app.include_router(circa_enhancements_router)
 app.include_router(circa_premium_router)
+
 
 @app.get("/")
 async def root():
@@ -131,6 +134,13 @@ async def root():
             "/signal/handshake",
             "/signal/heartbeat",
             "/signal/lanes",
+            "/intelligence/agents",
+            "/intelligence/agents/lease",
+            "/intelligence/agents/jobs",
+            "/intelligence/web/sources",
+            "/intelligence/web/changes",
+            "/intelligence/web/route",
+            "/intelligence/latency",
             "/db/status",
             "/db/tables",
             "/db/write",
@@ -157,6 +167,7 @@ async def root():
         ],
     }
 
+
 @app.on_event("startup")
 async def startup_event():
     initialize_audit()
@@ -164,4 +175,4 @@ async def startup_event():
     sentinel_engine.initialize()
     init_webhook_store()
     init_signal_verification_store()
-    log.info("Ether v2 starting — persistent audit, admin controls, Sentinel enforcement/recovery, provider webhook operations, verified signals, production gate, readiness, operations, and Circa Haus enhanced/premium routes loaded")
+    log.info("Ether v2 starting — persistent audit, admin controls, Sentinel enforcement/recovery, provider webhook operations, rotating proof signals, agent/web intelligence, production gate, readiness, operations, and project-specific adapters loaded")
