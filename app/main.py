@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.middleware.errors import install_error_handlers
 from app.middleware.internal_gate import InternalOnlyGate
+from app.middleware.latency import EtherLatencyMiddleware
 
 from app.routers.auth import router as auth_router
 from app.routers.circa_enhancements import router as circa_enhancements_router
@@ -22,7 +23,9 @@ from app.routers.readiness import router as readiness_router
 from app.routers.sentinel import router as sentinel_router
 from app.routers.signal import router as signal_router
 from app.routers.webhooks import router as webhooks_router
+from app.routers.intelligence import router as intelligence_router
 
+from app.utils.agent_handlers import register_builtin_agent_handlers
 from app.utils.audit import initialize_audit
 from app.utils.control_plane import control_plane_state
 from app.utils.sentinel import sentinel_engine
@@ -35,10 +38,11 @@ log = logging.getLogger("ether_v2.main")
 app = FastAPI(
     title="Ether Backend v2",
     version=settings.ETHER_VERSION,
-    description="Sealed internal-only Ether API (contracts + ingest + observability + admin control plane + sentinel enforcement/recovery + provider webhook operations + verified signal/keepalive + production gate + readiness checks + operations + Circa Haus enhanced creator commerce/rights/premium workflows)",
+    description="Sealed internal-only Ether API (contracts + ingest + observability + admin control plane + sentinel enforcement/recovery + provider webhook operations + verified ratcheting signals + agent/web intelligence + production gate + readiness checks + operations + project-specific adapters)",
 )
 
 install_error_handlers(app)
+app.add_middleware(EtherLatencyMiddleware)
 
 if settings.ETHER_CORS_MODE == "allowlist":
     app.add_middleware(
@@ -70,8 +74,10 @@ app.include_router(providers_router)
 app.include_router(webhooks_router)
 app.include_router(sentinel_router)
 app.include_router(signal_router)
+app.include_router(intelligence_router)
 app.include_router(circa_enhancements_router)
 app.include_router(circa_premium_router)
+
 
 @app.get("/")
 async def root():
@@ -79,83 +85,35 @@ async def root():
         "status": "Ether Backend v2 Online (SEALED)",
         "mode": "internal-only",
         "routes": [
-            "/health",
-            "/health/deep",
-            "/version",
-            "/ether/ingest",
-            "/projects",
-            "/projects/bootstrap",
-            "/readiness",
-            "/readiness/{project_slug}",
-            "/operations/production/gate",
-            "/operations/production/checklist",
-            "/operations/suite/status",
-            "/operations/suite/smoke",
-            "/operations/cron/status",
-            "/operations/cron/signal",
-            "/operations/audit/recent",
-            "/operations/audit/summary",
-            "/operations/signal/health",
-            "/operations/signal/history",
-            "/operations/signal/readiness",
-            "/operations/signal/all",
-            "/operations/signal/{project_slug}",
-            "/auth/verify",
-            "/controls",
-            "/controls/summary",
-            "/controls/blockers",
-            "/controls/history",
-            "/controls/impact/{project_slug}",
-            "/controls/recovery/{project_slug}",
-            "/controls/recover",
-            "/controls/project/disable",
-            "/controls/project/enable",
-            "/controls/provider/disable",
-            "/controls/provider/enable",
-            "/providers/{project_slug}",
-            "/providers/{project_slug}/readiness",
-            "/providers/readiness/suite",
-            "/webhooks/status",
-            "/webhooks/events",
-            "/webhooks/{provider}/{project_slug}",
-            "/sentinel/status",
-            "/sentinel/enforce",
-            "/sentinel/recovery/{project_slug}",
-            "/sentinel/recovery",
-            "/sentinel/events",
-            "/sentinel/review",
-            "/sentinel/review/manual",
-            "/sentinel/quarantine",
-            "/sentinel/quarantine/release",
-            "/sentinel/quarantines",
-            "/signal/handshake",
-            "/signal/heartbeat",
-            "/signal/lanes",
-            "/db/status",
-            "/db/tables",
-            "/db/write",
-            "/circa/enhanced/scope",
-            "/circa/rights/attestations",
-            "/circa/rights/copyright-claims",
-            "/circa/merch/ideation/sessions",
-            "/circa/merch/concepts",
-            "/circa/merch/concepts/approve",
-            "/circa/merch/preflight-reviews",
-            "/circa/creator-shop",
-            "/circa/creator-shop/items",
-            "/circa/audio/license-verifications",
-            "/circa/premium/scope",
-            "/circa/premium/saia/merch-briefs",
-            "/circa/premium/saia/workflow-events",
-            "/circa/premium/collections",
-            "/circa/premium/collections/items",
-            "/circa/premium/drops/waitlist",
-            "/circa/premium/checkout/intents",
-            "/circa/premium/analytics/events",
-            "/circa/premium/audio/placements",
-            "/circa/premium/merch/publish-ready",
+            "/health", "/health/deep", "/version", "/ether/ingest",
+            "/projects", "/projects/bootstrap", "/readiness", "/readiness/{project_slug}",
+            "/operations/production/gate", "/operations/production/checklist", "/operations/suite/status",
+            "/operations/suite/smoke", "/operations/cron/status", "/operations/cron/signal",
+            "/operations/audit/recent", "/operations/audit/summary", "/operations/signal/health",
+            "/operations/signal/history", "/operations/signal/readiness", "/operations/signal/all",
+            "/operations/signal/{project_slug}", "/auth/verify", "/controls", "/controls/summary",
+            "/controls/blockers", "/controls/history", "/controls/impact/{project_slug}",
+            "/controls/recovery/{project_slug}", "/controls/recover", "/controls/project/disable",
+            "/controls/project/enable", "/controls/provider/disable", "/controls/provider/enable",
+            "/providers/{project_slug}", "/providers/{project_slug}/readiness", "/providers/readiness/suite",
+            "/webhooks/status", "/webhooks/events", "/webhooks/{provider}/{project_slug}",
+            "/sentinel/status", "/sentinel/enforce", "/sentinel/recovery/{project_slug}",
+            "/sentinel/recovery", "/sentinel/events", "/sentinel/review", "/sentinel/review/manual",
+            "/sentinel/quarantine", "/sentinel/quarantine/release", "/sentinel/quarantines",
+            "/signal/handshake", "/signal/heartbeat", "/signal/lanes",
+            "/intelligence/agents", "/intelligence/agents/lease", "/intelligence/agents/jobs",
+            "/intelligence/web/sources", "/intelligence/web/changes", "/intelligence/web/route",
+            "/intelligence/latency", "/db/status", "/db/tables", "/db/write",
+            "/circa/enhanced/scope", "/circa/rights/attestations", "/circa/rights/copyright-claims",
+            "/circa/merch/ideation/sessions", "/circa/merch/concepts", "/circa/merch/concepts/approve",
+            "/circa/merch/preflight-reviews", "/circa/creator-shop", "/circa/creator-shop/items",
+            "/circa/audio/license-verifications", "/circa/premium/scope", "/circa/premium/saia/merch-briefs",
+            "/circa/premium/saia/workflow-events", "/circa/premium/collections", "/circa/premium/collections/items",
+            "/circa/premium/drops/waitlist", "/circa/premium/checkout/intents", "/circa/premium/analytics/events",
+            "/circa/premium/audio/placements", "/circa/premium/merch/publish-ready",
         ],
     }
+
 
 @app.on_event("startup")
 async def startup_event():
@@ -164,4 +122,5 @@ async def startup_event():
     sentinel_engine.initialize()
     init_webhook_store()
     init_signal_verification_store()
-    log.info("Ether v2 starting — persistent audit, admin controls, Sentinel enforcement/recovery, provider webhook operations, verified signals, production gate, readiness, operations, and Circa Haus enhanced/premium routes loaded")
+    register_builtin_agent_handlers()
+    log.info("Ether v2 starting — persistent audit, admin controls, Sentinel enforcement/recovery, provider webhook operations, rotating proof signals, executable agent/web intelligence, latency telemetry, production gate, readiness, operations, and project-specific adapters loaded")
