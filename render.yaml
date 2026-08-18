@@ -13,7 +13,7 @@ services:
       - key: ETHER_ENVIRONMENT
         value: production
       - key: ETHER_VERSION
-        value: 2.2.0-circa-haus-precredential
+        value: 2.2.0-circa-haus-release-completion
       - key: GIT_SHA
         sync: false
       - key: ETHER_CORS_MODE
@@ -75,7 +75,7 @@ services:
       - key: CIRCA_HAUS_STRIPE_CONNECT_CLIENT_ID
         sync: false
       - key: CIRCA_HAUS_STRIPE_PLATFORM_FEE_BPS
-        value: "150"
+        value: "250"
       - key: CIRCA_HAUS_OPENAI_API_KEY
         sync: false
       - key: CIRCA_HAUS_OPENAI_MODEL
